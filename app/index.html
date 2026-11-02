@@ -39,6 +39,7 @@ input[type=file]{display:none}
 <div class="bar" id="tfs"></div>
 <div class="bar" id="tools">
 <button id="symb">EURUSD ▾</button>
+<button id="gob">⇥</button>
 <button id="xhb">✛</button>
 <button data-p="al">هشدار</button>
 <button data-p="ma">اندیکاتور</button>
@@ -163,7 +164,7 @@ function stepMAs(){
 
 // نمودار
 const css=n=>getComputedStyle(document.documentElement).getPropertyValue(n).trim();
-const chart=LightweightCharts.createChart($('chart'),{autoSize:true,crosshair:{mode:0},timeScale:{timeVisible:true,secondsVisible:true,rightOffset:5},rightPriceScale:{borderVisible:false,minimumWidth:64}});
+const chart=LightweightCharts.createChart($('chart'),{autoSize:true,handleScroll:{vertTouchDrag:false},crosshair:{mode:0},timeScale:{timeVisible:true,secondsVisible:true,rightOffset:5},rightPriceScale:{borderVisible:false,minimumWidth:64}});
 const candles=chart.addCandlestickSeries({priceFormat:{type:'price',precision:5,minMove:0.00001}});
 const IND={};
 const themeOpts=()=>({layout:{background:{color:css('--bg')},textColor:css('--mut')},grid:{vertLines:{color:css('--grid')},horzLines:{color:css('--grid')}}});
@@ -177,13 +178,13 @@ function render(fit){
   R=resample(tf);
   if(rp.on){const k=findK(rp.i);D=R.slice(0,k+1);D[k]=aggBar(R[k],rp.i)}else D=R;
   candles.setData(D);mas.forEach(m=>m.series.setData(maSeries(D,m)));Object.keys(IND).forEach(calcInd);
-  if(fit)chart.timeScale().setVisibleLogicalRange({from:Math.max(0,D.length-100),to:D.length+5});
+  if(fit)goLast();
   $('info').textContent=D.length+' candles';badge();
 }
 const bar=$('tfs');
 TF.forEach(([n,s])=>{const b=document.createElement('button');b.textContent=n;b.dataset.s=s;
-  b.onclick=()=>{tf=isNaN(+s)?s:+s;syncTF();render(true)};bar.appendChild(b)});
-function syncTF(){[...bar.children].forEach(b=>{const s=isNaN(+b.dataset.s)?b.dataset.s:+b.dataset.s;b.disabled=typeof s==='number'&&s<baseSec;b.className=s===tf?'on':''})}
+  b.onclick=()=>{tf=isNaN(+s)?s:+s;syncTF();if(!autoBase(tf))render(true)};bar.appendChild(b)});
+function syncTF(){[...bar.children].forEach(b=>{const s=isNaN(+b.dataset.s)?b.dataset.s:+b.dataset.s;b.disabled=typeof s==='number'&&(LIVEMODE()?(s<60&&!SRV):s<baseSec);b.className=s===tf?'on':''})}
 
 $('lvl').onclick=e=>{lvlMode=!lvlMode;e.target.classList.toggle('on',lvlMode)};
 $('clr').onclick=()=>{levels.forEach(l=>candles.removePriceLine(l));levels=[]};
@@ -565,7 +566,7 @@ function setRows(rows,live,src){SRCL=live?(src||'Live'):'Sample';
 }
 async function loadSymbol(sym,first){
   if(!first)saveState();
-  stopReplay();DERR='';SYM=sym;$('symb').textContent=sym+' ▾';
+  stopReplay();DERR='';levels.forEach(l=>{try{candles.removePriceLine(l)}catch(e){}});levels=[];SYM=sym;$('symb').textContent=sym+' ▾';
   let s={};try{s=JSON.parse(localStorage.getItem('fx_s_'+sym)||'{}')||{}}catch(e){}
   DR.items=Array.isArray(s.dr)?s.dr:[];DR.sel=null;DR.pend=null;DR.grab=0;ALERTS=Array.isArray(s.al)?s.al:[];LP=s.lp??null;
   let ok=false;
@@ -629,7 +630,7 @@ async function binanceRows(sym,tf,days){
   return out;
 }
 async function fetchSym(sym,first){
-  const tf=localStorage.getItem('h_tf')||'m15',days=+localStorage.getItem('h_days')||30;
+  const tf=localStorage.getItem('h_tf')||'m15',days=+localStorage.getItem('h_days')||30;CURTF=tf;
   try{
     if(SRV){const r=await fetch(`${SRV}/api/history?symbol=${sym}&tf=${tf}&days=${days}`);
       if(r.ok){const a=await r.json();if(Array.isArray(a)&&a.length>10){setRows(a.map(x=>({time:x[0],open:x[1],high:x[2],low:x[3],close:x[4]})),true,'سرور: Dukascopy/Binance');return true}else DERR=a.message||'پاسخ خالی از سرور'}else DERR='سرور خطا داد '+r.status}
@@ -663,8 +664,22 @@ $('split').onpointerdown=e=>{
 };
 const SB=document.createElement('div');SB.id='srcb';SB.style.cssText='position:absolute;top:3px;left:6px;z-index:4;pointer-events:none;font-size:10px;padding:2px 7px;border-radius:6px;color:#fff;direction:rtl;max-width:92%';$('chart').appendChild(SB);
 function badge(){const last=D.length?D[D.length-1]:null,real=SRCL!=='Sample';SB.style.background=real?'#16a34a':'#d97706';
-  SB.textContent=(real?'✓ '+SRCL:'⚠ دیتای نمونه (غیرواقعی)'+(DERR?' — '+DERR:''))+(last?' · آخرین '+last.close.toFixed(DEC)+' @ '+new Date(last.time*1000).toISOString().slice(0,16).replace('T',' ')+'Z':'')}
+  SB.textContent=(real?'✓ '+SRCL:'⚠ دیتای نمونه (غیرواقعی)'+(DERR?' — '+DERR:''))+(last?' · آخرین '+last.close.toFixed(DEC)+' @ '+new Date(last.time*1000).toISOString().slice(0,16).replace('T',' ')+'Z':'')+' · v8'}
 
+// انتخاب خودکار دیتای پایه بر اساس تایم‌فریم
+let CURTF=null;
+const LIVEMODE=()=>SRCL!=='Sample'&&SRCL!=='CSV';
+const TFCODE={30:'s30',60:'m1',300:'m5',900:'m15',1800:'m30',3600:'h1',14400:'h4',86400:'d1',W:'d1',M:'d1'};
+const TFDAYS={s30:3,m1:7,m5:30,m15:90,m30:180,h1:730,h4:1500,d1:3650};
+const TDI={s30:'1min',m1:'1min',m5:'5min',m15:'15min',m30:'30min',h1:'1h',h4:'4h',d1:'1day'};
+function autoBase(t){
+  if(!LIVEMODE())return false;
+  const code=TFCODE[t];if(!code||code===CURTF||(code==='s30'&&!SRV))return false;
+  localStorage.setItem('h_tf',code);localStorage.setItem('h_days',TFDAYS[code]);localStorage.setItem('td_iv',TDI[code]);
+  loadSymbol(SYM);return true;
+}
+function goLast(){const f=()=>{try{candles.priceScale().applyOptions({autoScale:true});chart.priceScale('right').applyOptions({autoScale:true})}catch(e){}chart.timeScale().setVisibleLogicalRange({from:Math.max(0,D.length-100),to:D.length+5})};f();setTimeout(f,150);setTimeout(f,500)}
+$('gob').onclick=goLast;
 let ST={};try{ST=JSON.parse(localStorage.getItem('fx_state')||'{}')||{}}catch(e){}
 syncTF();
 if(ST.cfg)Object.keys(ST.cfg).forEach(n=>{const c=ST.cfg[n];if(CFG[n]&&c&&c.st&&c.st.length===CFG[n].st.length){c.p=Object.assign(mk(n).p,c.p);c.lv=Array.isArray(c.lv)?c.lv:CFG[n].lv;CFG[n]=c}});
