@@ -314,10 +314,10 @@ const DEFS={
  ichi:{s:'Ichimoku',n:'Ichimoku Kinko Hyo',ov:1,f:[['t','Tenkan-sen',9],['k','Kijun-sen',26],['b','Senkou Span B',52],['fill','پرکردن',1,'chk']],
   st:[['Tenkan-sen','#ff0000',1],['Kijun-sen','#0000ff',1],['Up kumo','#70de00',4],['Down kumo','#f79300',4],['Chikou Span','#009900',1]],lv:[]},
  bb:{s:'Bollinger',n:'Bollinger Bands',ov:1,f:[['n','پریود',20],['d','انحراف',2]],st:[['Middle','#94a3b8',1],['Upper','#2563eb',1],['Lower','#2563eb',1]],lv:[]},
- rsi:{s:'RSI',n:'Relative Strength Index',f:[['n','پریود',14],['s','اعمال شود بر','close','sel']],st:[['سبک','#1f1fdc',4]],lv:[20,90]},
- macd:{s:'MACD',n:'MACD',f:[['f','EMA سریع',12],['s','EMA کند',26],['g','MACD SMA',9],['a','اعمال شود بر','close','sel']],st:[['اصلی','#f79300',1],['سیگنال','#c0c0c0',2]],lv:[20,80]},
- stoch:{s:'Stoch',n:'Stochastic Oscillator',f:[['k','پریود %K',5],['d','پریود %D',3],['sl','پریود کاهشی',3],['pf','فیلد قیمت','lh','sel'],['m','روش','sma','sel']],st:[['اصلی','#20b2aa',1],['سیگنال','#ff0000',1]],lv:[20,90]},
- atr:{s:'ATR',n:'Average True Range',f:[['n','پریود',14]],st:[['سبک','#14b8a6',1]],lv:[]}
+ rsi:{s:'RSI',n:'Relative Strength Index',f:[['n','پریود',14],['s','اعمال شود بر','close','sel'],['mg','ادغام در پنجره مشترک',1,'chk']],st:[['سبک','#1f1fdc',4]],lv:[20,90]},
+ macd:{s:'MACD',n:'MACD',f:[['f','EMA سریع',12],['s','EMA کند',26],['g','MACD SMA',9],['a','اعمال شود بر','close','sel'],['mg','ادغام در پنجره مشترک',1,'chk']],st:[['اصلی','#f79300',1],['سیگنال','#c0c0c0',2]],lv:[20,80]},
+ stoch:{s:'Stoch',n:'Stochastic Oscillator',f:[['k','پریود %K',5],['d','پریود %D',3],['sl','پریود کاهشی',3],['pf','فیلد قیمت','lh','sel'],['m','روش','sma','sel'],['mg','ادغام در پنجره مشترک',1,'chk']],st:[['اصلی','#20b2aa',1],['سیگنال','#ff0000',1]],lv:[20,90]},
+ atr:{s:'ATR',n:'Average True Range',f:[['n','پریود',14],['mg','ادغام در پنجره مشترک',1,'chk']],st:[['سبک','#14b8a6',1]],lv:[]}
 };
 const mk=n=>{const d=DEFS[n],p={};d.f.forEach(f=>p[f[0]]=f[2]);return{p,st:d.st.map(x=>[x[1],x[2]]),lv:d.lv.slice()}};
 const CFG={};Object.keys(DEFS).forEach(n=>CFG[n]=mk(n));
@@ -381,20 +381,44 @@ function calcInd(n){
   if(x.cloud){x.cloud.d=r[5];x.cloud.rq&&x.cloud.rq()}
   if(x.base)x.base.setData(D.map(b=>({time:b.time})));
 }
+let SH=null;
+const lab=n=>DEFS[n].s+'('+Object.entries(CFG[n].p).filter(([k,v])=>typeof v==='number'&&k!=='mg'&&k!=='fill').map(v=>v[1]).join(',')+')';
+function mkPane(h){
+  const el=document.createElement('div');el.style.cssText='position:relative;height:'+h+'px;flex:none;border-top:1px solid var(--bd)';
+  $('oscs').appendChild(el);const ch=makeChart(el);
+  const lg=document.createElement('div');lg.style.cssText='position:absolute;top:2px;left:6px;z-index:7;display:flex;gap:4px;align-items:center;font-size:11px;direction:ltr;flex-wrap:wrap;max-width:94%';el.appendChild(lg);
+  return{el,ch,lg,h,names:[]};
+}
+function renderLg(pn){
+  const g=pn.lg;g.innerHTML='';
+  const mkb=(t,f,col)=>{const b=document.createElement('button');b.textContent=t;b.style.cssText='padding:1px 6px;font-size:11px;opacity:.9'+(col?';color:'+col:'');b.onclick=f;g.appendChild(b)};
+  mkb('▲',()=>{const p=pn.el.previousElementSibling;if(p)$('oscs').insertBefore(pn.el,p)});
+  mkb('▼',()=>{const nx=pn.el.nextElementSibling;if(nx)$('oscs').insertBefore(nx,pn.el)});
+  mkb('↕',()=>{pn.h=pn.h>=150?60:pn.h+45;pn.el.style.height=pn.h+'px'});
+  pn.names.forEach(n=>mkb(lab(n)+' ✕',()=>{offInd(n);IB[n]&&IB[n].classList.remove('on');saveState()},CFG[n].st[0][0]));
+}
 function onInd(n){
-  const df=DEFS[n],c=CFG[n];let ch=chart,el=null,bs=null;
-  if(!df.ov){el=document.createElement('div');el.style.cssText='height:80px;flex:none;border-top:1px solid var(--bd)';$('oscs').appendChild(el);ch=makeChart(el);bs=ch.addLineSeries({visible:false,priceLineVisible:false,lastValueVisible:false})}
-  const ser=c.st.map(([col,w])=>ch.addLineSeries({color:col,lineWidth:w,priceLineVisible:false,lastValueVisible:false,crosshairMarkerVisible:false}));
+  const df=DEFS[n],c=CFG[n];let ch=chart,pn=null,bs=null,shared=false;
+  if(!df.ov){
+    if(c.p.mg){if(!SH)SH=mkPane(110);pn=SH;shared=true}else pn=mkPane(80);
+    ch=pn.ch;pn.names.push(n);
+    bs=ch.addLineSeries({visible:false,priceLineVisible:false,lastValueVisible:false});
+  }
+  const ov=shared&&pn.names.length>1;
+  const ser=c.st.map(([col,w])=>ch.addLineSeries({color:col,lineWidth:w,priceLineVisible:false,lastValueVisible:false,crosshairMarkerVisible:false,...(ov?{priceScaleId:n}:{})}));
+  if(ov)ch.priceScale(n).applyOptions({scaleMargins:{top:.08,bottom:.08},visible:false});
   c.lv.forEach(p=>ser[0].createPriceLine({price:p,color:'#888',lineWidth:1,lineStyle:2,axisLabelVisible:false}));
-  const x=IND[n]={ser,ch,el,base:bs};
+  const x=IND[n]={ser,ch,el:pn&&pn.el,pn,base:bs};
   if(n==='ichi'&&c.p.fill){x.cloud=new Cloud();ser[2].attachPrimitive(x.cloud)}
   calcInd(n);
-  if(el){const r=chart.timeScale().getVisibleLogicalRange();if(r)ch.timeScale().setVisibleLogicalRange(r)}
+  if(pn){renderLg(pn);const r=chart.timeScale().getVisibleLogicalRange();if(r)ch.timeScale().setVisibleLogicalRange(r)}
 }
 function offInd(n){
   const x=IND[n];if(!x)return;
   if(x.cloud)x.ser[2].detachPrimitive(x.cloud);
-  if(x.el){x.ch._off();x.ch.remove();x.el.remove()}else x.ser.forEach(s=>x.ch.removeSeries(s));
+  if(x.pn){const pn=x.pn;x.ser.concat(x.base).forEach(s=>pn.ch.removeSeries(s));pn.names=pn.names.filter(z=>z!==n);
+    if(!pn.names.length){pn.ch._off();pn.ch.remove();pn.el.remove();if(SH===pn)SH=null}else renderLg(pn)}
+  else x.ser.forEach(s=>x.ch.removeSeries(s));
   delete IND[n];
 }
 function toggleInd(n,btn){if(IND[n]){offInd(n);btn.classList.remove('on')}else{onInd(n);btn.classList.add('on')}saveState()}
@@ -595,7 +619,23 @@ async function enablePush(){
 const post=(u,b)=>fetch(SRV+u,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)}).catch(()=>{});
 function srvAlert(a){const sub=pSub();if(SRV&&sub)post('/api/alerts',{id:a.id,sub,symbol:SYM,price:a.price,ref:D.length?D[D.length-1].close:a.price})}
 function srvDel(a){if(SRV)post('/api/alerts/delete',{id:a.id})}
+const BINS={BTCUSD:'BTCUSDT',ETHUSD:'ETHUSDT'},BIV={s30:'1m',m1:'1m',m5:'5m',m15:'15m',m30:'30m',h1:'1h',h4:'4h',d1:'1d'};
+async function binanceRows(sym,tf,days){
+  let t=Date.now()-days*864e5,out=[];
+  for(let i=0;i<80;i++){const r=await(await fetch(`https://data-api.binance.vision/api/v3/klines?symbol=${sym}&interval=${BIV[tf]||'15m'}&startTime=${t}&limit=1000`)).json();
+    if(!Array.isArray(r)||!r.length)break;r.forEach(k=>out.push({time:k[0]/1000,open:+k[1],high:+k[2],low:+k[3],close:+k[4]}));t=r[r.length-1][0]+1;if(r.length<1000)break}
+  return out;
+}
 async function fetchSym(sym,first){
+  const tf=localStorage.getItem('h_tf')||'m15',days=+localStorage.getItem('h_days')||30;
+  try{
+    if(SRV){const r=await fetch(`${SRV}/api/history?symbol=${sym}&tf=${tf}&days=${days}`);
+      if(r.ok){const a=await r.json();if(Array.isArray(a)&&a.length>10){setRows(a.map(x=>({time:x[0],open:x[1],high:x[2],low:x[3],close:x[4]})),true);return true}}}
+    if(BINS[sym]){const rows=await binanceRows(BINS[sym],tf,days);if(rows.length>10){setRows(rows,true);return true}}
+  }catch(e){}
+  return fetchTD(sym,first);
+}
+async function fetchTD(sym,first){
   const iv=localStorage.getItem('td_iv')||'15min';let j;
   if(SRV)j=await(await fetch(`${SRV}/api/candles?symbol=${encodeURIComponent(sym)}&interval=${iv}`)).json();
   else{let key=localStorage.getItem('td_key');if(!key){if(first)return false;key=prompt('Twelve Data API key (twelvedata.com):');if(!key)return false;localStorage.setItem('td_key',key)}
@@ -605,7 +645,7 @@ async function fetchSym(sym,first){
   const rows=j.values.reverse().map(v=>({time:Date.parse(v.datetime.replace(' ','T')+(v.datetime.length<=10?'T00:00:00':'')+'Z')/1000,open:+v.open,high:+v.high,low:+v.low,close:+v.close})).filter(x=>!isNaN(x.time));
   if(rows.length<10)return false;setRows(rows,true);return true;
 }
-$('apib').onclick=()=>{const iv=prompt('Interval: 1min 5min 15min 30min 1h 4h 1day 1week 1month',localStorage.getItem('td_iv')||'15min');if(iv){localStorage.setItem('td_iv',iv);loadSymbol(SYM)}};
+$('apib').onclick=()=>{const t=prompt('تایم‌فریم پایه دیتا: s30 m1 m5 m15 m30 h1 h4 d1',localStorage.getItem('h_tf')||'m15');if(!t)return;const d=prompt('چند روز گذشته؟ (مثلاً 30 یا 365 یا 1500)',localStorage.getItem('h_days')||'30');if(!d)return;localStorage.setItem('h_tf',t);localStorage.setItem('h_days',d);const m={s30:'1min',m1:'1min',m5:'5min',m15:'15min',m30:'30min',h1:'1h',h4:'4h',d1:'1day'};localStorage.setItem('td_iv',m[t]||'15min');loadSymbol(SYM)};
 (()=>{const b=document.createElement('button');b.textContent='🔔 اعلان پس‌زمینه';b.onclick=enablePush;$('al').insertBefore(b,$('all'))})();
 if('serviceWorker' in navigator)navigator.serviceWorker.register('sw.js').catch(()=>{});
 
