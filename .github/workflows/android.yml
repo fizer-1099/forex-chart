@@ -1,11 +1,6 @@
 name: Android APK
 on:
-  push:
-    branches: [main]
-    paths: ['app/**', 'capacitor.config.json', 'package.json']
   workflow_dispatch:
-permissions:
-  contents: write
 jobs:
   apk:
     runs-on: ubuntu-latest
@@ -21,9 +16,7 @@ jobs:
       - run: npm install
       - run: npx cap add android && npx cap sync android
       - run: cd android && chmod +x gradlew && ./gradlew assembleDebug
-      - name: Publish release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh release delete latest --yes --cleanup-tag || true
-          gh release create latest android/app/build/outputs/apk/debug/app-debug.apk --title "Latest APK" --notes "Auto build ${{ github.sha }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: forex-chart-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
