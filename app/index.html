@@ -32,6 +32,7 @@ table{border-collapse:collapse;width:100%;font-size:12px}td,th{padding:3px 5px;b
 input[type=file]{display:none}
 #dlg{display:none;position:fixed;inset:0;z-index:50;background:var(--bg);overflow-y:auto;padding:calc(env(safe-area-inset-top,0px) + 10px) 14px 20px}#dlg h4{margin:14px 0 4px;border-bottom:1px solid var(--bd);padding-bottom:4px}#dlg label{padding:6px 0}
 #sym{display:none;position:fixed;top:0;bottom:0;right:0;width:min(72vw,320px);z-index:60;background:var(--bg);border-left:1px solid var(--bd);overflow-y:auto;padding-top:env(safe-area-inset-top,0px);box-shadow:-4px 0 16px #0004}.sy{padding:16px 18px;border-bottom:1px solid var(--bd);direction:ltr;text-align:left;font-size:15px}.sy.on{color:var(--ac);font-weight:700}#toast{display:none;position:fixed;top:calc(env(safe-area-inset-top,0px) + 8px);left:8px;right:8px;z-index:90;background:#f59e0b;color:#000;padding:10px;border-radius:10px;text-align:center;font-weight:600}.tl{display:block;width:100%;text-align:start;margin:4px 0;padding:12px}
+#split{display:none;flex:none;height:18px;align-items:center;justify-content:center;background:var(--bd);touch-action:none;cursor:ns-resize}#split div{width:48px;height:4px;border-radius:2px;background:var(--mut)}
 </style>
 </head>
 <body>
@@ -53,7 +54,8 @@ input[type=file]{display:none}
 </div>
 <div id="info"></div>
 <div id="chart"></div>
-<div id="oscs" style="flex:none"></div>
+<div id="split"><div></div></div>
+<div id="oscs" style="flex:none;display:flex;flex-direction:column;height:0"></div>
 
 <div class="pn" id="ma">
 <div id="malist" class="row" style="flex-direction:column;align-items:stretch"></div>
@@ -176,7 +178,7 @@ function render(fit){
   if(rp.on){const k=findK(rp.i);D=R.slice(0,k+1);D[k]=aggBar(R[k],rp.i)}else D=R;
   candles.setData(D);mas.forEach(m=>m.series.setData(maSeries(D,m)));Object.keys(IND).forEach(calcInd);
   if(fit)chart.timeScale().setVisibleLogicalRange({from:Math.max(0,D.length-100),to:D.length+5});
-  $('info').textContent=D.length+' candles';
+  $('info').textContent=D.length+' candles';badge();
 }
 const bar=$('tfs');
 TF.forEach(([n,s])=>{const b=document.createElement('button');b.textContent=n;b.dataset.s=s;
@@ -215,7 +217,7 @@ $('csv').onchange=e=>{
     rows.sort((a,b)=>a.time-b.time);
     if(rows.length<10){$('info').textContent='فایل معتبر نبود: time,open,high,low,close';return}
     const df=rows.slice(1,300).map((r,i)=>r.time-rows[i].time).filter(x=>x>0).sort((a,b)=>a-b);
-    baseSec=df[df.length>>1]||60;base=rows;stopReplay();
+    baseSec=df[df.length>>1]||60;base=rows;stopReplay();SRCL='CSV';
     const dec=DEC=String(rows[0].close).split('.')[1]?.length||5;
     candles.applyOptions({priceFormat:{type:'price',precision:dec,minMove:Math.pow(10,-dec)}});
     if(typeof tf==='number'&&tf<baseSec)tf=baseSec;
@@ -384,17 +386,17 @@ function calcInd(n){
 let SH=null;
 const lab=n=>DEFS[n].s+'('+Object.entries(CFG[n].p).filter(([k,v])=>typeof v==='number'&&k!=='mg'&&k!=='fill').map(v=>v[1]).join(',')+')';
 function mkPane(h){
-  const el=document.createElement('div');el.style.cssText='position:relative;height:'+h+'px;flex:none;border-top:1px solid var(--bd)';
+  const el=document.createElement('div');el.style.cssText='position:relative;flex:1 1 0;min-height:48px;border-top:1px solid var(--bd)';
   $('oscs').appendChild(el);const ch=makeChart(el);
   const lg=document.createElement('div');lg.style.cssText='position:absolute;top:2px;left:6px;z-index:7;display:flex;gap:4px;align-items:center;font-size:11px;direction:ltr;flex-wrap:wrap;max-width:94%';el.appendChild(lg);
-  return{el,ch,lg,h,names:[]};
+  return{el,ch,lg,w:1,names:[]};
 }
 function renderLg(pn){
   const g=pn.lg;g.innerHTML='';
   const mkb=(t,f,col)=>{const b=document.createElement('button');b.textContent=t;b.style.cssText='padding:1px 6px;font-size:11px;opacity:.9'+(col?';color:'+col:'');b.onclick=f;g.appendChild(b)};
   mkb('▲',()=>{const p=pn.el.previousElementSibling;if(p)$('oscs').insertBefore(pn.el,p)});
   mkb('▼',()=>{const nx=pn.el.nextElementSibling;if(nx)$('oscs').insertBefore(nx,pn.el)});
-  mkb('↕',()=>{pn.h=pn.h>=150?60:pn.h+45;pn.el.style.height=pn.h+'px'});
+  mkb('↕',()=>{pn.w=pn.w>=3?1:pn.w+1;pn.el.style.flexGrow=pn.w});
   pn.names.forEach(n=>mkb(lab(n)+' ✕',()=>{offInd(n);IB[n]&&IB[n].classList.remove('on');saveState()},CFG[n].st[0][0]));
 }
 function onInd(n){
@@ -553,7 +555,7 @@ function sampleSym(sym){
     for(let k=0;k<3;k++){c+=(r()-.5)*v+Math.sin(i/3000)*v*.03;hi=Math.max(hi,c);lo=Math.min(lo,c)}out.push({time:t,open:o,high:hi,low:lo,close:c});p=c}
   return out;
 }
-function setRows(rows,live){
+function setRows(rows,live,src){SRCL=live?(src||'Live'):'Sample';
   const df=rows.slice(1,300).map((r,i)=>r.time-rows[i].time).filter(x=>x>0).sort((a,b)=>a-b);
   baseSec=df[df.length>>1]||60;base=rows;const p0=rows[0].close;
   DEC=live?(String(p0).split('.')[1]?.length||2):(p0<10?5:p0<500?3:2);PIP=PIPS[SYM]||Math.pow(10,-(DEC-1));
@@ -563,7 +565,7 @@ function setRows(rows,live){
 }
 async function loadSymbol(sym,first){
   if(!first)saveState();
-  stopReplay();SYM=sym;$('symb').textContent=sym+' ▾';
+  stopReplay();DERR='';SYM=sym;$('symb').textContent=sym+' ▾';
   let s={};try{s=JSON.parse(localStorage.getItem('fx_s_'+sym)||'{}')||{}}catch(e){}
   DR.items=Array.isArray(s.dr)?s.dr:[];DR.sel=null;DR.pend=null;DR.grab=0;ALERTS=Array.isArray(s.al)?s.al:[];LP=s.lp??null;
   let ok=false;
@@ -630,24 +632,38 @@ async function fetchSym(sym,first){
   const tf=localStorage.getItem('h_tf')||'m15',days=+localStorage.getItem('h_days')||30;
   try{
     if(SRV){const r=await fetch(`${SRV}/api/history?symbol=${sym}&tf=${tf}&days=${days}`);
-      if(r.ok){const a=await r.json();if(Array.isArray(a)&&a.length>10){setRows(a.map(x=>({time:x[0],open:x[1],high:x[2],low:x[3],close:x[4]})),true);return true}}}
-    if(BINS[sym]){const rows=await binanceRows(BINS[sym],tf,days);if(rows.length>10){setRows(rows,true);return true}}
-  }catch(e){}
+      if(r.ok){const a=await r.json();if(Array.isArray(a)&&a.length>10){setRows(a.map(x=>({time:x[0],open:x[1],high:x[2],low:x[3],close:x[4]})),true,'سرور: Dukascopy/Binance');return true}else DERR=a.message||'پاسخ خالی از سرور'}else DERR='سرور خطا داد '+r.status}
+    if(BINS[sym]){const rows=await binanceRows(BINS[sym],tf,days);if(rows.length>10){setRows(rows,true,'Binance');return true}}
+  }catch(e){DERR=e.message}
   return fetchTD(sym,first);
 }
 async function fetchTD(sym,first){
   const iv=localStorage.getItem('td_iv')||'15min';let j;
   if(SRV)j=await(await fetch(`${SRV}/api/candles?symbol=${encodeURIComponent(sym)}&interval=${iv}`)).json();
-  else{let key=localStorage.getItem('td_key');if(!key){if(first)return false;key=prompt('Twelve Data API key (twelvedata.com):');if(!key)return false;localStorage.setItem('td_key',key)}
+  else{let key=localStorage.getItem('td_key');if(!key){if(first){DERR='سرور یا کلید Twelve Data تنظیم نشده';return false}key=prompt('Twelve Data API key (twelvedata.com):');if(!key)return false;localStorage.setItem('td_key',key)}
     const q=/^[A-Z]{6}$/.test(sym)?sym.slice(0,3)+'/'+sym.slice(3):sym;
     j=await(await fetch(`https://api.twelvedata.com/time_series?symbol=${encodeURIComponent(q)}&interval=${iv}&outputsize=5000&timezone=UTC&apikey=${key}`)).json()}
-  if(!j.values){alert(j.message||'خطا در دریافت دیتا');return false}
+  if(!j.values){DERR=j.message||'خطا در دریافت دیتا';alert(DERR);return false}
   const rows=j.values.reverse().map(v=>({time:Date.parse(v.datetime.replace(' ','T')+(v.datetime.length<=10?'T00:00:00':'')+'Z')/1000,open:+v.open,high:+v.high,low:+v.low,close:+v.close})).filter(x=>!isNaN(x.time));
-  if(rows.length<10)return false;setRows(rows,true);return true;
+  if(rows.length<10)return false;setRows(rows,true,'Twelve Data');return true;
 }
 $('apib').onclick=()=>{const t=prompt('تایم‌فریم پایه دیتا: s30 m1 m5 m15 m30 h1 h4 d1',localStorage.getItem('h_tf')||'m15');if(!t)return;const d=prompt('چند روز گذشته؟ (مثلاً 30 یا 365 یا 1500)',localStorage.getItem('h_days')||'30');if(!d)return;localStorage.setItem('h_tf',t);localStorage.setItem('h_days',d);const m={s30:'1min',m1:'1min',m5:'5min',m15:'15min',m30:'30min',h1:'1h',h4:'4h',d1:'1day'};localStorage.setItem('td_iv',m[t]||'15min');loadSymbol(SYM)};
 (()=>{const b=document.createElement('button');b.textContent='🔔 اعلان پس‌زمینه';b.onclick=enablePush;$('al').insertBefore(b,$('all'))})();
 if('serviceWorker' in navigator)navigator.serviceWorker.register('sw.js').catch(()=>{});
+
+
+let SRCL='Sample',DERR='',OSCH=170;try{OSCH=+localStorage.getItem('fx_osch')||170}catch(e){}
+function oscLayout(){const n=$('oscs').children.length;$('split').style.display=n?'flex':'none';$('oscs').style.height=n?OSCH+'px':'0px'}
+new MutationObserver(oscLayout).observe($('oscs'),{childList:true});
+$('split').onpointerdown=e=>{
+  const y0=e.clientY,h0=OSCH,sp=$('split');sp.setPointerCapture(e.pointerId);e.preventDefault();
+  const mv=ev=>{OSCH=Math.max(70,Math.min(innerHeight*.7,h0+(y0-ev.clientY)));oscLayout()};
+  const up=()=>{sp.removeEventListener('pointermove',mv);sp.removeEventListener('pointerup',up);try{localStorage.setItem('fx_osch',OSCH)}catch(_){}};
+  sp.addEventListener('pointermove',mv);sp.addEventListener('pointerup',up);
+};
+const SB=document.createElement('div');SB.id='srcb';SB.style.cssText='position:absolute;top:3px;left:6px;z-index:4;pointer-events:none;font-size:10px;padding:2px 7px;border-radius:6px;color:#fff;direction:rtl;max-width:92%';$('chart').appendChild(SB);
+function badge(){const last=D.length?D[D.length-1]:null,real=SRCL!=='Sample';SB.style.background=real?'#16a34a':'#d97706';
+  SB.textContent=(real?'✓ '+SRCL:'⚠ دیتای نمونه (غیرواقعی)'+(DERR?' — '+DERR:''))+(last?' · آخرین '+last.close.toFixed(DEC)+' @ '+new Date(last.time*1000).toISOString().slice(0,16).replace('T',' ')+'Z':'')}
 
 let ST={};try{ST=JSON.parse(localStorage.getItem('fx_state')||'{}')||{}}catch(e){}
 syncTF();
