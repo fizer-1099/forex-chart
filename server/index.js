@@ -68,6 +68,17 @@ app.get('/api/history', async (req, res) => {
   } catch (e) { res.status(502).json({ message: e.message }); }
 });
 
+// قیمت لحظه‌ای با کش ۸ ثانیه‌ای (چند کاربر یک اعتبار مصرف می‌کنند)
+const pcache = new Map();
+app.get('/api/price', async (req, res) => {
+  try {
+    const sym = req.query.symbol, h = pcache.get(sym);
+    if (h && Date.now() - h.t < 8000) return res.json(h.j);
+    const j = await (await fetch(`https://api.twelvedata.com/price?symbol=${encodeURIComponent(q(sym))}&apikey=${KEY}`)).json();
+    pcache.set(sym, { t: Date.now(), j }); res.json(j);
+  } catch (e) { res.status(502).json({ message: e.message }); }
+});
+
 app.post('/api/alerts', (req, res) => {
   const { id, sub, symbol, price, ref } = req.body;
   if (!sub || !symbol || !(price > 0)) return res.status(400).end();
