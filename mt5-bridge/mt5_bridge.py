@@ -52,10 +52,22 @@ def auth():
         return jsonify(error="unauthorized"), 401
 
 
+HINTS = {
+    10027: "معاملات الگوریتمی (AutoTrading) در MT5 روی VPS خاموش است: دکمه Algo Trading را روشن کنید و در Tools ← Options ← Expert Advisors گزینه Allow algorithmic trading را تیک بزنید",
+    10019: "موجودی یا مارجین کافی نیست", 10018: "بازار بسته است", 10017: "معامله برای این نماد غیرفعال است",
+    10014: "حجم نامعتبر است", 10015: "قیمت نامعتبر است", 10016: "SL یا TP نامعتبر یا خیلی نزدیک به قیمت است",
+    10030: "نوع پر شدن (filling) پذیرفته نشد", 10004: "قیمت تغییر کرد؛ دوباره تلاش کنید",
+    10031: "اتصال MT5 به سرور بروکر برقرار نیست", 10024: "درخواست‌ها زیاد است؛ کمی صبر کنید",
+}
+
+
 def guard():
     a = mt5.account_info()
     if a is None:
         return "MT5 آماده نیست"
+    ti = mt5.terminal_info()
+    if ti is not None and not ti.trade_allowed:
+        return HINTS[10027]
     if a.trade_mode != mt5.ACCOUNT_TRADE_MODE_DEMO and not ALLOW_REAL:
         return "حساب واقعی مسدود است (ALLOW_REAL=1 لازم است)"
     return None
@@ -65,7 +77,7 @@ def done(r):
     if r is None:
         return jsonify(error=str(mt5.last_error())), 502
     if r.retcode not in (mt5.TRADE_RETCODE_DONE, mt5.TRADE_RETCODE_PLACED):
-        return jsonify(error=f"{r.retcode}: {r.comment}"), 400
+        return jsonify(error=f"{r.retcode}: {HINTS.get(r.retcode, '')} ({r.comment})"), 400
     return jsonify(ticket=r.order or r.deal, comment=r.comment)
 
 
@@ -75,7 +87,8 @@ def ping():
     if a is None:
         return jsonify(error="MT5 آماده نیست"), 503
     return jsonify(login=a.login, server=a.server, demo=a.trade_mode == mt5.ACCOUNT_TRADE_MODE_DEMO,
-                   balance=a.balance, equity=a.equity, currency=a.currency, allow_real=ALLOW_REAL, max_lot=MAX_LOT)
+                   balance=a.balance, equity=a.equity, currency=a.currency, allow_real=ALLOW_REAL, max_lot=MAX_LOT,
+                   algo=bool(getattr(mt5.terminal_info(), 'trade_allowed', True)))
 
 
 @app.get("/api/candles")
@@ -115,7 +128,7 @@ def positions():
                 lots=o.volume_current, price=o.price_open, sl=o.sl, tp=o.tp)
            for o in (mt5.orders_get() or []) if o.type in PEND_BACK]
     a = mt5.account_info()
-    return jsonify(positions=ps, orders=os_, balance=a.balance, equity=a.equity, profit=a.profit)
+    return jsonify(positions=ps, orders=os_, balance=a.balance, equity=a.equity, profit=a.profit, free=a.margin_free)
 
 
 def fill_mode(sym, pending):
@@ -238,6 +251,19 @@ def watch():
             continue
         out.append(dict(symbol=s, bid=tk.bid, ask=tk.ask, chg=getattr(i, "price_change", 0)))
     return jsonify(out)
+
+
+@app.get("/api/margin")
+def margin():
+    sym, side, lots = request.args["symbol"], request.args.get("side", "B"), float(request.args["lots"])
+    t = mt5.symbol_info_tick(sym)
+    if t is None:
+        return jsonify(error="no tick"), 404
+    buy = side == "B"
+    m = mt5.order_calc_margin(mt5.ORDER_TYPE_BUY if buy else mt5.ORDER_TYPE_SELL, sym, lots, t.ask if buy else t.bid)
+    if m is None:
+        return jsonify(error=str(mt5.last_error())), 400
+    return jsonify(margin=m, free=mt5.account_info().margin_free)
 
 
 @app.post("/api/cancel")
