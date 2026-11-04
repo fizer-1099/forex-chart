@@ -210,6 +210,12 @@ def close():
         return done(mt5.order_send(req))
 
 
+@app.get("/api/symbols")
+def symbols():
+    # نمادهای روشن در Market Watch
+    return jsonify([x.name for x in (mt5.symbols_get() or []) if x.visible])
+
+
 @app.get("/api/symbol")
 def symbol():
     i = mt5.symbol_info(request.args["symbol"])

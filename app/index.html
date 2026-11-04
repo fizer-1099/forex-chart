@@ -559,7 +559,7 @@ $('drc').oninput=()=>{const s=DR.items[DR.sel];if(s&&!DR.tool){s.c=$('drc').valu
 let SYM='EURUSD',DEC=5,PIP=0.0001,ALERTS=[],AL=[],LP=null,XP=null;
 const SP={EURUSD:1.085,GBPUSD:1.27,USDCAD:1.36,USDCHF:.88,USDJPY:150,AUDUSD:.66,NZDUSD:.61,XAUUSD:2650,XAGUSD:31,BTCUSD:78000,ETHUSD:3400,EURGBP:.85,EURJPY:163,GBPJPY:190,AUDJPY:98,EURCHF:.94,YM:42000,NQ:20500,SPX:5800,USOIL:72,XNGUSD:2.6,'#NIKE':76};
 const PIPS={BTCUSD:1,ETHUSD:.1,YM:1,NQ:1,SPX:1};
-const ALLS=Object.keys(SP);
+let ALLS=Object.keys(SP);
 function sampleSym(sym){
   let h=0;for(const ch of sym)h=(h*31+ch.charCodeAt(0))>>>0;let s=h||42;const r=()=>(s=(s*1664525+1013904223)%4294967296)/4294967296;
   let p=SP[sym]||1,t=Math.floor(Date.now()/30000)*30-30*2880*28,out=[];const v=p*6.5e-5;
@@ -685,7 +685,7 @@ new MutationObserver(oscLayout).observe($('oscs'),{childList:true});
 })();
 const SB=document.createElement('div');SB.id='srcb';SB.style.cssText='position:absolute;top:3px;left:6px;z-index:4;pointer-events:none;font-size:10px;padding:2px 7px;border-radius:6px;color:#fff;direction:rtl;max-width:92%';$('chart').appendChild(SB);
 function badge(){const last=D.length?D[D.length-1]:null,real=SRCL!=='Sample';SB.style.background=real?'#16a34a':'#d97706';
-  SB.textContent=(real?'✓ '+SRCL:'⚠ دیتای نمونه (غیرواقعی)'+(DERR?' — '+DERR:''))+(last?' · آخرین '+last.close.toFixed(DEC)+' @ '+fmtT(last.time)+(tzOff()?'':'Z'):'')+' · v13'}
+  SB.textContent=(real?'✓ '+SRCL:'⚠ دیتای نمونه (غیرواقعی)'+(DERR?' — '+DERR:''))+(last?' · آخرین '+last.close.toFixed(DEC)+' @ '+fmtT(last.time)+(tzOff()?'':'Z'):'')+' · v14'}
 
 // انتخاب خودکار دیتای پایه بر اساس تایم‌فریم
 let CURTF=null;
@@ -936,7 +936,8 @@ async function mt(path,body){
   const j=await r.json();if(!r.ok)throw new Error(j.error||('HTTP '+r.status));return j;
 }
 async function mt5Connect(){
-  try{MT5.acc=await mt('/api/ping');MT5.ok=true;
+  try{MT5.acc=await mt('/api/ping');MT5.ok=true;MT5.listed=false;
+    try{const l=await mt('/api/symbols');if(Array.isArray(l)&&l.length){ALLS=l;MT5.suf='';MT5.listed=true}}catch(e){}
     try{localStorage.setItem('fx_mt5',JSON.stringify({url:MT5.url,tok:MT5.tok,suf:MT5.suf}))}catch(e){}
     startMtPoll();return true}
   catch(e){MT5.ok=false;MT5.err=e.message;return false}
@@ -983,7 +984,7 @@ function openMT5(){
 <div class="row"><button id="m_go">ذخیره و تست اتصال</button><button id="m_off">قطع اتصال</button></div><div id="m_st" class="mut" style="margin-top:8px">${MT5.ok&&MT5.acc?'متصل: '+MT5.acc.login+' · '+MT5.acc.server+' · '+(MT5.acc.demo?'DEMO':'REAL'):''}</div>`;
   dl.style.display='block';$('dcl').onclick=()=>dl.style.display='none';
   $('m_go').onclick=async()=>{MT5.url=$('m_url').value.trim();MT5.tok=$('m_tok').value.trim();MT5.suf=$('m_suf').value.trim();$('m_st').textContent='در حال اتصال...';
-    if(await mt5Connect()){const a=MT5.acc;$('m_st').textContent='✓ متصل: '+a.login+' · '+a.server+' · '+(a.demo?'DEMO':'⚠ REAL')+' · موجودی '+a.balance+' '+a.currency+' · سقف حجم '+a.max_lot;loadSymbol(SYM)}
+    if(await mt5Connect()){const a=MT5.acc;$('m_st').textContent='✓ متصل: '+a.login+' · '+a.server+' · '+(a.demo?'DEMO':'⚠ REAL')+' · موجودی '+a.balance+' '+a.currency+' · سقف حجم '+a.max_lot;loadSymbol(ALLS.includes(SYM)?SYM:ALLS[0])}
     else $('m_st').textContent='✗ '+MT5.err};
   $('m_off').onclick=()=>{MT5.ok=false;clearInterval(MTT);LPOS=null;MT5.pos=[];MT5.orders=[];try{localStorage.removeItem('fx_mt5')}catch(e){}drawPend();$('m_st').textContent='قطع شد'};
 }
@@ -1123,7 +1124,7 @@ dm.forEach(m=>addMA(m.type,m.n,m.src,m.color));
 mas.forEach((m,i)=>{if(dm[i].on===false){m.on=false;m.series.applyOptions({visible:false})}});listMA();
 calcRisk();
 (ST.ind||[]).forEach(n=>{if(DEFS[n]){onInd(n);IB[n]&&IB[n].classList.add('on')}});
-(MT5.url&&MT5.tok?mt5Connect():Promise.resolve()).finally(()=>loadSymbol(ST.sym||'EURUSD',true));
+(MT5.url&&MT5.tok?mt5Connect():Promise.resolve()).finally(()=>{const s0=ST.sym||'EURUSD';loadSymbol(MT5.listed&&!ALLS.includes(s0)?ALLS[0]:s0,true)});
 
 </script>
 </body>
