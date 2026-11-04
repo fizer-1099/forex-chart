@@ -592,7 +592,7 @@ function saveState(){try{
 // لیست نمادها
 function openSyms(){
   const p=$('sym');if(p.style.display==='block'){p.style.display='none';return}
-  p.style.display='block';p.innerHTML='<input id="syq" placeholder="Search" dir="ltr" style="width:calc(100% - 16px);margin:8px"><div id="syl"></div>';
+  p.style.display='block';p.innerHTML='<input id="syq" placeholder="Search" dir="ltr" style="width:calc(100% - 16px);margin:8px"><div id="syh" class="mut" style="padding:0 12px 6px;font-size:11px">'+symHead()+'</div><div id="syl"></div>';
   const fill=q=>{$('syl').innerHTML='';ALLS.filter(s=>s.toLowerCase().includes(q.toLowerCase())).forEach(s=>{const d=document.createElement('div');d.className='sy'+(s===SYM?' on':'');d.textContent=s;d.onclick=()=>{p.style.display='none';loadSymbol(s)};$('syl').appendChild(d)})};
   fill('');$('syq').oninput=e=>fill(e.target.value);
 }
@@ -685,7 +685,7 @@ new MutationObserver(oscLayout).observe($('oscs'),{childList:true});
 })();
 const SB=document.createElement('div');SB.id='srcb';SB.style.cssText='position:absolute;top:3px;left:6px;z-index:4;pointer-events:none;font-size:10px;padding:2px 7px;border-radius:6px;color:#fff;direction:rtl;max-width:92%';$('chart').appendChild(SB);
 function badge(){const last=D.length?D[D.length-1]:null,real=SRCL!=='Sample';SB.style.background=real?'#16a34a':'#d97706';
-  SB.textContent=(real?'✓ '+SRCL:'⚠ دیتای نمونه (غیرواقعی)'+(DERR?' — '+DERR:''))+(last?' · آخرین '+last.close.toFixed(DEC)+' @ '+fmtT(last.time)+(tzOff()?'':'Z'):'')+' · v14'}
+  SB.textContent=(real?'✓ '+SRCL:'⚠ دیتای نمونه (غیرواقعی)'+(DERR?' — '+DERR:''))+(last?' · آخرین '+last.close.toFixed(DEC)+' @ '+fmtT(last.time)+(tzOff()?'':'Z'):'')+' · v15'}
 
 // انتخاب خودکار دیتای پایه بر اساس تایم‌فریم
 let CURTF=null;
@@ -760,7 +760,7 @@ requestAnimationFrame(sltLoop);
 // ===== پنل معامله (مثل MT5) =====
 function mkDraft(){
   const hs=DRAFT&&DRAFT.sl!=null,ht=DRAFT&&DRAFT.tp!=null,px0=lastPx(),off=20*PIP;
-  DRAFT={side:'B',type:tOT,entry:px0,sl:null,tp:null,lots:+$('lot').value||0.1,pending:tOT!=='mkt'};
+  DRAFT={side:tSide,type:tOT,entry:px0,sl:null,tp:null,lots:+$('lot').value||0.1,pending:tOT!=='mkt'};
   if(tOT!=='mkt'){DRAFT.side=OT[tOT][1];DRAFT.entry=px0+((tOT==='bl'||tOT==='ss')?-off:off)}
   const dir=DRAFT.side==='B'?1:-1;
   if(hs)DRAFT.sl=DRAFT.entry-dir*(+$('slp').value||20)*PIP;
@@ -788,6 +788,7 @@ function checkOrder(side,e,sl,tp){
   return true;
 }
 function placeMarket(side){
+  tSide=side;
   if(!rp.on&&MT5.ok)return liveOrder(side,'mkt');
   if(rp.pos||!DRAFT)return;
   const b=base[rp.i],e=b.close;let sl=DRAFT.sl,tp=DRAFT.tp;
@@ -822,7 +823,7 @@ function buildTrade(){
   else if(!DRAFT)h+='<div class="row"><button id="tnew" style="flex:1">+ سفارش جدید</button></div>';
   else{
     h+=`<div class="row" style="flex-wrap:nowrap"><button class="sb" id="tsell" style="background:#dc2626">SELL<br><span id="tsp"></span></button><div class="row" style="flex:1;justify-content:center;flex-wrap:nowrap"><button id="tlm">−</button><input id="tlot" type="number" step="0.01" value="${DRAFT.lots}" style="width:60px;text-align:center"><button id="tlp">+</button></div><button class="sb" id="tbuy" style="background:#2563eb">BUY<br><span id="tbp"></span></button></div>`;
-    h+='<div class="row"><button class="circ" id="ttp" style="border-color:#16a34a;color:#16a34a">TP</button><button class="circ" id="tsl" style="border-color:#dc2626;color:#dc2626">SL</button></div><div class="row"><span class="mut">ریسک٪</span><input id="trk" type="number" step="0.1" value="'+$('rkp').value+'" style="width:60px"><button id="tauto">لات از ریسک</button></div><div id="trr" class="mut" style="font-size:11px"></div>';
+    h+=(DRAFT.pending?'':'<div class="row" id="tsd"><span class="mut">جهت معامله:</span><button data-sd="B">BUY</button><button data-sd="S">SELL</button></div>');h+='<div class="row"><button class="circ" id="ttp" style="border-color:#16a34a;color:#16a34a">TP</button><button class="circ" id="tsl" style="border-color:#dc2626;color:#dc2626">SL</button></div><div class="row"><span class="mut">ریسک٪</span><input id="trk" type="number" step="0.1" value="'+$('rkp').value+'" style="width:60px"><button id="tauto">لات از ریسک</button></div><div id="trr" class="mut" style="font-size:11px"></div>';
     h+='<div class="row" style="flex-wrap:nowrap;overflow-x:auto">'+Object.keys(OT).map(k=>`<button data-o="${k}" class="${k===tOT?'on':''}">${OT[k][0]}</button>`).join('')+'</div>';
   }
   h+='<div id="tpl"></div>';t.innerHTML=h;
@@ -839,6 +840,7 @@ function buildTrade(){
     $('tsl').onclick=()=>{const dir=D0.side==='B'?1:-1;D0.sl=D0.sl==null?D0.entry-dir*(+$('slp').value||20)*PIP:null;tglStyle()};
     document.querySelectorAll('[data-o]').forEach(b=>b.onclick=()=>{tOT=b.dataset.o;mkDraft();buildTrade()});
     $('tauto').onclick=autoLot;
+    document.querySelectorAll('[data-sd]').forEach(b=>{const on=()=>document.querySelectorAll('[data-sd]').forEach(x=>x.className=x.dataset.sd===D0.side?'on':'');on();b.onclick=()=>{const ns=b.dataset.sd;if(D0.side!==ns){const e=D0.entry;if(D0.sl!=null)D0.sl=2*e-D0.sl;if(D0.tp!=null)D0.tp=2*e-D0.tp;D0.side=ns;tSide=ns;on()}}});
     if(D0.pending){$('tsell').style.display='none';$('tbuy').textContent='ثبت '+OTN[D0.type];$('tbuy').style.background=D0.side==='B'?'#2563eb':'#dc2626';$('tbuy').onclick=placePending}
     else{$('tsell').onclick=()=>placeMarket('S');$('tbuy').onclick=()=>placeMarket('B')}
     tglStyle();
@@ -1116,6 +1118,9 @@ function listAlerts(){const l=$('all');if(!l)return;l.innerHTML='';ALERTS.forEac
   dr.insertBefore(row,dr.lastElementChild);
 })();
 
+let tSide='B';
+function symHead(){return MT5.ok?(MT5.listed?'Market Watch · '+ALLS.length+' نماد <button onclick="loadAllSyms()" style="font-size:11px;padding:2px 8px">همه نمادهای بروکر</button>':'لیست پیش‌فرض (فایل mt5_bridge.py روی VPS را به‌روز کنید)'):ALLS.length+' نماد'}
+function loadAllSyms(){mt('/api/symbols?all=1').then(l=>{if(Array.isArray(l)&&l.length){ALLS=l;$('sym').style.display='none';openSyms()}}).catch(e=>flash(e.message))}
 let ST={};try{ST=JSON.parse(localStorage.getItem('fx_state')||'{}')||{}}catch(e){}
 syncTF();
 if(ST.cfg)Object.keys(ST.cfg).forEach(n=>{const c=ST.cfg[n];if(CFG[n]&&c&&c.st&&c.st.length===CFG[n].st.length){c.p=Object.assign(mk(n).p,c.p);c.lv=Array.isArray(c.lv)?c.lv:CFG[n].lv;CFG[n]=c}});

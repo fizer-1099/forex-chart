@@ -213,7 +213,8 @@ def close():
 @app.get("/api/symbols")
 def symbols():
     # نمادهای روشن در Market Watch
-    return jsonify([x.name for x in (mt5.symbols_get() or []) if x.visible])
+    allv = request.args.get("all") == "1"
+    return jsonify([x.name for x in (mt5.symbols_get() or []) if allv or x.visible])
 
 
 @app.get("/api/symbol")
