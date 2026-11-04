@@ -190,18 +190,47 @@ def close():
     g = guard()
     if g:
         return jsonify(error=g), 403
-    p = mt5.positions_get(ticket=int(request.get_json(force=True)["ticket"]))
+    d = request.get_json(force=True)
+    p = mt5.positions_get(ticket=int(d["ticket"]))
     if not p:
         return jsonify(error="معامله پیدا نشد"), 404
     p = p[0]
+    info = mt5.symbol_info(p.symbol)
+    vol = min(float(d.get("volume") or p.volume), p.volume)
+    vol = round(round(vol / info.volume_step) * info.volume_step, 2)
+    if vol < info.volume_min:
+        return jsonify(error="حجم نامعتبر"), 400
     t = mt5.symbol_info_tick(p.symbol)
     buy = p.type == mt5.POSITION_TYPE_BUY
-    req = dict(action=mt5.TRADE_ACTION_DEAL, symbol=p.symbol, volume=p.volume, position=p.ticket,
+    req = dict(action=mt5.TRADE_ACTION_DEAL, symbol=p.symbol, volume=vol, position=p.ticket,
                type=mt5.ORDER_TYPE_SELL if buy else mt5.ORDER_TYPE_BUY, price=t.bid if buy else t.ask,
                deviation=20, magic=MAGIC, comment="fxapp close", type_time=mt5.ORDER_TIME_GTC,
                type_filling=fill_mode(p.symbol, False))
     with lock:
         return done(mt5.order_send(req))
+
+
+@app.get("/api/symbol")
+def symbol():
+    i = mt5.symbol_info(request.args["symbol"])
+    if i is None:
+        return jsonify(error="نماد پیدا نشد"), 404
+    return jsonify(tick_value=i.trade_tick_value, tick_size=i.trade_tick_size, digits=i.digits,
+                   spread=i.spread, volume_min=i.volume_min, volume_step=i.volume_step)
+
+
+@app.get("/api/watch")
+def watch():
+    out = []
+    for s in request.args.get("symbols", "").split(","):
+        if not s:
+            continue
+        mt5.symbol_select(s, True)
+        tk, i = mt5.symbol_info_tick(s), mt5.symbol_info(s)
+        if tk is None or i is None:
+            continue
+        out.append(dict(symbol=s, bid=tk.bid, ask=tk.ask, chg=getattr(i, "price_change", 0)))
+    return jsonify(out)
 
 
 @app.post("/api/cancel")

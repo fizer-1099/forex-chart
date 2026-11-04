@@ -34,6 +34,7 @@ input[type=file]{display:none}
 #sym{display:none;position:fixed;top:0;bottom:0;right:0;width:min(72vw,320px);z-index:60;background:var(--bg);border-left:1px solid var(--bd);overflow-y:auto;padding-top:env(safe-area-inset-top,0px);box-shadow:-4px 0 16px #0004}.sy{padding:16px 18px;border-bottom:1px solid var(--bd);direction:ltr;text-align:left;font-size:15px}.sy.on{color:var(--ac);font-weight:700}#toast{display:none;position:fixed;top:calc(env(safe-area-inset-top,0px) + 8px);left:8px;right:8px;z-index:90;background:#f59e0b;color:#000;padding:10px;border-radius:10px;text-align:center;font-weight:600}.tl{display:block;width:100%;text-align:start;margin:4px 0;padding:12px}
 #split{display:none;flex:none;height:30px;align-items:center;justify-content:center;background:var(--bd);touch-action:none;cursor:ns-resize}#split div{width:48px;height:4px;border-radius:2px;background:var(--mut)}
 #tfs,#tools{display:none}#top{justify-content:space-between;gap:4px}#top button{padding:6px 9px;font-size:14px}#tfb{font-weight:700}#trd{display:none;flex:none;border-top:1px solid var(--bd);padding:8px;background:var(--bg);max-height:36vh;overflow-y:auto}#trd .row{margin-bottom:6px}.circ{width:42px;height:42px;border-radius:50%;padding:0;font-weight:700}.tg{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}.tg button{padding:12px 4px}.sb{flex:1;color:#fff;border:0;padding:8px;font-weight:700;border-radius:10px;line-height:1.25}
+.fs #top,.fs #tfs,.fs #tools{display:none}.wr{display:flex;justify-content:space-between;padding:14px 8px;border-bottom:1px solid var(--bd)}.wr>*{flex:1;text-align:center}
 </style>
 </head>
 <body>
@@ -84,8 +85,8 @@ input[type=file]{display:none}
 </div>
 
 <div class="pn" id="jr">
-<div id="jst" class="mut"></div>
-<div style="overflow-x:auto"><table><thead><tr><th>#</th><th>نوع</th><th>ورود</th><th>خروج</th><th>پیپ</th><th>سود</th></tr></thead><tbody id="jtb"></tbody></table></div>
+<div id="jst" class="mut"></div><div id="jeq"></div>
+<div style="overflow-x:auto"><table><thead><tr><th>#</th><th>نوع</th><th>ورود</th><th>خروج</th><th>پیپ</th><th>سود</th><th>📝</th></tr></thead><tbody id="jtb"></tbody></table></div>
 <div class="row"><button id="jclr">پاک‌کردن ژورنال</button></div>
 </div>
 
@@ -182,7 +183,7 @@ theme();matchMedia('(prefers-color-scheme:dark)').addEventListener('change',them
 function render(fit){
   R=resample(tf);
   if(rp.on){const k=findK(rp.i);D=R.slice(0,k+1);D[k]=aggBar(R[k],rp.i)}else D=R;
-  candles.setData(D);mas.forEach(m=>m.series.setData(maSeries(D,m)));Object.keys(IND).forEach(calcInd);
+  candles.setData(dispData(D));applyCT();mas.forEach(m=>m.series.setData(maSeries(D,m)));Object.keys(IND).forEach(calcInd);
   if(fit)goLast();
   $('info').textContent=D.length+' candles';badge();
 }
@@ -251,9 +252,9 @@ $('rstart').onclick=()=>rp.on?stopReplay():startReplay();
 $('rpos').oninput=()=>$('rpv').textContent=$('rpos').value+'%';
 function step(){
   const k=findK(rp.i),nx=R[k+1];if(!nx){clearInterval(rp.timer);rp.timer=null;$('rplay').textContent='▶';return}
-  D[k]=R[k];candles.update(R[k]);
+  D[k]=R[k];ctOf()==='heikin'?0:candles.update(R[k]);
   for(let j=rp.i+1;j<=nx.li;j++){rp.i=j;checkPos(base[j]);if(j>0)checkAlerts(base[j-1].close,base[j].close)}
-  D.push(aggBar(nx,rp.i));candles.update(D[D.length-1]);stepMAs();Object.keys(IND).forEach(calcInd);status();
+  D.push(aggBar(nx,rp.i));updLast();stepMAs();Object.keys(IND).forEach(calcInd);status();
 }
 $('rstep').onclick=step;
 $('rplay').onclick=()=>{
@@ -273,10 +274,10 @@ function open(side){
 function closePos(price,why){
   const p=rp.pos;if(!p)return;const d=p.side==='B'?1:-1,pr=pip();
   const pips=(price-p.entry)*d/pr;
-  trades.push({side:p.side,entry:p.entry,exit:price,pips:+pips.toFixed(1),pnl:+(pips*10*p.lots).toFixed(2),xt:base[rp.i].time,why});
+  trades.push({side:p.side,entry:p.entry,exit:price,pips:+pips.toFixed(1),pnl:+(pips*PV*p.lots).toFixed(2),xt:base[rp.i].time,why});
   save();rp.pos=null;$('rclose').disabled=true;
 }
-function checkPos(b){fillPend(b);
+function checkPos(b){fillPend(b);trailTick(b.close);
   const p=rp.pos;if(!p)return;
   if(p.side==='B'){if(b.low<=p.sl)closePos(p.sl,'SL');else if(p.tp&&b.high>=p.tp)closePos(p.tp,'TP')}
   else{if(b.high>=p.sl)closePos(p.sl,'SL');else if(p.tp&&b.low<=p.tp)closePos(p.tp,'TP')}
@@ -285,7 +286,7 @@ $('rbuy').onclick=()=>open('B');$('rsell').onclick=()=>open('S');
 $('rclose').onclick=()=>{closePos(base[rp.i].close,'MAN');status()};
 function status(){
   const eq=bal0()+trades.reduce((s,t)=>s+t.pnl,0),p=rp.pos;
-  let fl='';if(p){const d=p.side==='B'?1:-1,pips=(base[rp.i].close-p.entry)*d/pip();fl=` · ${p.side==='B'?'خرید':'فروش'} ${pips.toFixed(1)} پیپ (${(pips*10*p.lots).toFixed(2)}$)`}
+  let fl='';if(p){const d=p.side==='B'?1:-1,pips=(base[rp.i].close-p.entry)*d/pip();fl=` · ${p.side==='B'?'خرید':'فروش'} ${pips.toFixed(1)} پیپ (${(pips*PV*p.lots).toFixed(2)}$)`}
   $('rst').textContent='سرمایه: '+eq.toFixed(2)+'$'+fl+' · '+new Date(base[rp.i].time*1000).toISOString().slice(0,16).replace('T',' ');
   if(!$('jr').classList.contains('show')===false)renderJ();
 }
@@ -303,7 +304,7 @@ $('jclr').onclick=()=>{trades=[];save();renderJ();if(rp.on)status()};
 // ریسک
 function calcRisk(){
   const b=+$('bal').value,r=+$('rkp').value,s=+$('rks').value;
-  const usd=b*r/100,lots=s>0?usd/(s*10):0;
+  const usd=b*r/100,lots=s>0?usd/(s*PV):0;
   $('rkout').textContent=`ریسک: ${usd.toFixed(2)}$ → حجم: ${lots.toFixed(2)} لات`;return lots;
 }
 ['bal','rkp','rks'].forEach(i=>$(i).oninput=calcRisk);
@@ -459,8 +460,8 @@ Object.keys(DEFS).forEach(n=>{const b=document.createElement('button'),g=documen
 const DR={items:[],tool:null,pend:null,sel:null,grab:0};
 const idxT=t=>{let a=0,b=D.length-1;if(b<0)return 0;while(a<b){const m=(a+b+1)>>1;if(D[m].time<=t)a=m;else b=m-1}return a};const nearT=t=>D.length?D[idxT(t)].time:t;
 const FIB=[0,.236,.382,.5,.618,.786,1];
-const TG=[['خطوط',['vline','hline','trend','angle','cycle','arrow']],['کانال‌ها',['channel','regr','pitch']],['گن',['gann','gfan']],['فیبوناچی',['fib','fext','ffan','ftime']],['اشکال و ابزار',['rect','ray','alert']]];
-const TOOLS={vline:{n:'خط عمودی',pts:1},hline:{n:'خط افقی',pts:1},trend:{n:'خط روند',pts:2},angle:{n:'خط روند با زاویه',pts:2},cycle:{n:'خطوط سیکل',pts:2},arrow:{n:'خطوط نشانگر',pts:2},channel:{n:'کانال هم‌فاصله',pts:3},regr:{n:'کانال رگرسیون',pts:2},pitch:{n:'چنگال اندرو',pts:3},gann:{n:'خط گن',pts:2},gfan:{n:'فن گن',pts:2},fib:{n:'فیبوناچی بازگشتی',pts:2},fext:{n:'فیبوناچی گسترش',pts:3},ffan:{n:'فن فیبوناچی',pts:2},ftime:{n:'مناطق زمانی فیبوناچی',pts:2},rect:{n:'مستطیل',pts:2},ray:{n:'نیم‌خط',pts:2},alert:{n:'هشدار قیمت',pts:1}};
+const TG=[['خطوط',['vline','hline','trend','angle','cycle','arrow']],['کانال‌ها',['channel','regr','pitch']],['گن',['gann','gfan']],['فیبوناچی',['fib','fext','ffan','ftime']],['اشکال و ابزار',['rect','ray','ruler','text','arrowup','arrowdn','alert']]];
+const TOOLS={vline:{n:'خط عمودی',pts:1},hline:{n:'خط افقی',pts:1},trend:{n:'خط روند',pts:2},angle:{n:'خط روند با زاویه',pts:2},cycle:{n:'خطوط سیکل',pts:2},arrow:{n:'خطوط نشانگر',pts:2},channel:{n:'کانال هم‌فاصله',pts:3},regr:{n:'کانال رگرسیون',pts:2},pitch:{n:'چنگال اندرو',pts:3},gann:{n:'خط گن',pts:2},gfan:{n:'فن گن',pts:2},fib:{n:'فیبوناچی بازگشتی',pts:2},fext:{n:'فیبوناچی گسترش',pts:3},ffan:{n:'فن فیبوناچی',pts:2},ftime:{n:'مناطق زمانی فیبوناچی',pts:2},rect:{n:'مستطیل',pts:2},ray:{n:'نیم‌خط',pts:2},alert:{n:'هشدار قیمت',pts:1},ruler:{n:'خط‌کش',pts:2},text:{n:'متن',pts:1},arrowup:{n:'فلش بالا',pts:1},arrowdn:{n:'فلش پایین',pts:1}};
 function openTools(){
   const dl=$('dlg');let h='<div class="row" style="justify-content:space-between"><button id="dcl">←</button><b>افزودن شیء</b></div>';
   TG.forEach(([g,ks])=>{h+=`<h4>${g}</h4>`;ks.forEach(k=>h+=`<button class="tl" data-t="${k}">${TOOLS[k].n}</button>`)});
@@ -492,13 +493,17 @@ function geo(it,W,H){
   else if(k==='fext'){S.push([a[0],a[1],b[0],b[1]],[b[0],b[1],c[0],c[1]]);[0,.618,1,1.618,2.618].forEach(f=>{const pr=it.p3+(it.p2-it.p1)*f,y=py(pr);if(y!=null){S.push([c[0],y,W,y]);L.push([f+'  '+pr.toFixed(DEC),c[0]+4,y-3])}})}
   else if(k==='ffan'){S.push([a[0],a[1],b[0],b[1]]);[.382,.5,.618].forEach(f=>ray(a[0],a[1],b[0]-a[0],(b[1]-a[1])*f))}
   else if(k==='ftime'){[0,1,2,3,5,8,13,21,34].forEach(n=>{const xx=a[0]+(b[0]-a[0])*n;if(xx>=-1&&xx<=W)S.push([xx,0,xx,H])})}
+  else if(k==='ruler'){S.push([a[0],a[1],b[0],b[1]]);F.push([[a[0],a[1]],[b[0],a[1]],[b[0],b[1]],[a[0],b[1]]]);const dp=it.p2-it.p1;L.push([(dp>=0?'+':'')+(dp/PIP).toFixed(1)+'p  '+(dp/it.p1*100).toFixed(2)+'%  '+Math.abs(idxT(it.t2)-idxT(it.t1))+' bars  '+fmtDur(Math.abs(it.t2-it.t1)),Math.min(a[0],b[0])+4,Math.min(a[1],b[1])-6])}
+  else if(k==='text'){S.push([a[0]-4,a[1],a[0]+4,a[1]]);L.push([it.txt||'',a[0]+8,a[1]+4])}
+  else if(k==='arrowup'){S.push([a[0],a[1]+20,a[0],a[1]],[a[0],a[1],a[0]-7,a[1]+8],[a[0],a[1],a[0]+7,a[1]+8])}
+  else if(k==='arrowdn'){S.push([a[0],a[1]-20,a[0],a[1]],[a[0],a[1],a[0]-7,a[1]-8],[a[0],a[1],a[0]+7,a[1]-8])}
   return{S,F,L,P};
 }
 const drawPrim={
   attached(p){this.ch=p.chart;this.s=p.series;this.rq=p.requestUpdate},detached(){},updateAllViews(){},
   paneViews(){return[{zOrder:()=>'top',renderer:()=>({draw:t=>t.useMediaCoordinateSpace(({context:x,mediaSize:z})=>{
     const W=z.width,H=z.height;x.font='11px sans-serif';
-    DR.items.concat(DR.pend?[DR.pend]:[]).forEach((it,ix)=>{
+    DR.items.concat(DR.pend?[DR.pend]:[]).forEach((it,ix)=>{if(DR.hide)return;
       x.strokeStyle=x.fillStyle=it.c;
       if(ix>=DR.items.length){[[it.t1,it.p1],[it.t2,it.p2]].forEach(([tt,pp])=>{if(tt==null)return;const a=px(tt),b=py(pp);if(a!=null&&b!=null){x.beginPath();x.arc(a,b,4,0,6.3);x.fill()}});return}
       const g=geo(it,W,H);if(!g)return;x.lineWidth=ix===DR.sel?3:1.5;
@@ -516,7 +521,7 @@ chart.subscribeClick(p=>{
   const pr=candles.coordinateToPrice(p.point.y);if(pr==null)return;
   const c=$('drc').value,k=DR.tool,N=TOOLS[k].pts;
   if(k==='alert')addAlert(pr);
-  else if(N===1)DR.items.push({k,t1:p.time,p1:pr,c});
+  else if(N===1){const it={k,t1:p.time,p1:pr,c};if(k==='text'){const tx=prompt('متن:');if(!tx)return;it.txt=tx}DR.items.push(it)}
   else{const q=DR.pend||(DR.pend={k,c,n:0});q.n++;q['t'+q.n]=p.time;q['p'+q.n]=pr;
     if(q.n>=N){delete q.n;DR.items.push(q);DR.pend=null;$('info').textContent=''}else $('info').textContent='نقطه '+(q.n+1)+' را لمس کنید'}
   saveState();drawPrim.rq&&drawPrim.rq();
@@ -534,6 +539,7 @@ const px=t=>chart.timeScale().timeToCoordinate(nearT(t)),py=p=>candles.priceToCo
 const sd=(x,y,a,b,c,d)=>{const dx=c-a,dy=d-b,l=dx*dx+dy*dy,t=l?Math.max(0,Math.min(1,((x-a)*dx+(y-b)*dy)/l)):0;return Math.hypot(x-(a+t*dx),y-(b+t*dy))};
 function dist(it,x,y){const g=geo(it,chart.timeScale().width(),$('chart').clientHeight);if(!g)return 1e9;let m=1e9;g.S.forEach(s=>{m=Math.min(m,sd(x,y,s[0],s[1],s[2],s[3]))});return m}
 function editTap(p){
+  if(DR.lock||DR.hide)return;
   const pr=candles.coordinateToPrice(p.point.y);if(pr==null)return;
   const x=p.point.x,y=p.point.y,s=DR.items[DR.sel],W=chart.timeScale().width(),H=$('chart').clientHeight;
   if(DR.grab&&s){
@@ -576,7 +582,7 @@ async function loadSymbol(sym,first){
   DR.items=Array.isArray(s.dr)?s.dr:[];DR.sel=null;DR.pend=null;DR.grab=0;ALERTS=Array.isArray(s.al)?s.al:[];LP=s.lp??null;
   let ok=false;
   if(window.fetchSym){try{ok=await fetchSym(sym,first)}catch(e){alert('خطا: '+e.message)}}
-  if(!ok)setRows(sampleSym(sym),false);
+  if(!ok)setRows(sampleSym(sym),false);updPV();
   drawAlerts();listAlerts();drawPrim.rq&&drawPrim.rq();
 }
 function saveState(){try{
@@ -609,7 +615,7 @@ $('chart').style.position='relative';$('chart').appendChild(XH);
 const xmove=e=>{const r=$('chart').getBoundingClientRect(),x=e.clientX-r.left,y=e.clientY-r.top;
   $('xhv').style.left=x+'px';$('xhh').style.top=y+'px';XP=candles.coordinateToPrice(y);
   $('xhl').style.top=(y-10)+'px';$('xhl').textContent=XP==null?'':XP.toFixed(DEC);
-  const t=chart.timeScale().coordinateToTime(x);$('xht').style.left=Math.max(0,x-45)+'px';$('xht').textContent=t==null?'':new Date(t*1000).toISOString().slice(5,16).replace('T',' ')};
+  const t=chart.timeScale().coordinateToTime(x);$('xht').style.left=Math.max(0,x-45)+'px';$('xht').textContent=t==null?'':fmtT(t).slice(5)};
 XH.addEventListener('pointerdown',e=>{try{XH.setPointerCapture(e.pointerId)}catch(_){}xmove(e)});
 XH.addEventListener('pointermove',e=>{if(e.buttons)xmove(e)});
 $('xhb').onclick=e=>{const on=XH.style.display!=='block';XH.style.display=on?'block':'none';e.currentTarget.classList.toggle('on',on)};
@@ -679,7 +685,7 @@ new MutationObserver(oscLayout).observe($('oscs'),{childList:true});
 })();
 const SB=document.createElement('div');SB.id='srcb';SB.style.cssText='position:absolute;top:3px;left:6px;z-index:4;pointer-events:none;font-size:10px;padding:2px 7px;border-radius:6px;color:#fff;direction:rtl;max-width:92%';$('chart').appendChild(SB);
 function badge(){const last=D.length?D[D.length-1]:null,real=SRCL!=='Sample';SB.style.background=real?'#16a34a':'#d97706';
-  SB.textContent=(real?'✓ '+SRCL:'⚠ دیتای نمونه (غیرواقعی)'+(DERR?' — '+DERR:''))+(last?' · آخرین '+last.close.toFixed(DEC)+' @ '+new Date(last.time*1000).toISOString().slice(0,16).replace('T',' ')+'Z':'')+' · v12'}
+  SB.textContent=(real?'✓ '+SRCL:'⚠ دیتای نمونه (غیرواقعی)'+(DERR?' — '+DERR:''))+(last?' · آخرین '+last.close.toFixed(DEC)+' @ '+fmtT(last.time)+(tzOff()?'':'Z'):'')+' · v13'}
 
 // انتخاب خودکار دیتای پایه بر اساس تایم‌فریم
 let CURTF=null;
@@ -735,7 +741,7 @@ function sltLoop(){
       if(y==null){t.style.display='none';return}
       t.style.display='block';t.style.top=Math.max(18,Math.min(H-18,y))+'px';
       const pips=(pr-p.entry)*d/PIP;
-      t.textContent=k==='en'?(p===DRAFT?OTN[p.type]+'  '+pr.toFixed(DEC):'ENTRY '+pr.toFixed(DEC)):k.toUpperCase()+'  '+pips.toFixed(1)+'p  '+(pips*10*p.lots).toFixed(2)+'$';
+      t.textContent=k==='en'?(p===DRAFT?OTN[p.type]+'  '+pr.toFixed(DEC):'ENTRY '+pr.toFixed(DEC)):k.toUpperCase()+'  '+pips.toFixed(1)+'p  '+(pips*PV*p.lots).toFixed(2)+'$'+(k==='tp'&&p.sl!=null?'  R:R '+(Math.abs(pr-p.entry)/Math.abs(p.entry-p.sl)).toFixed(1):'');
     });
   }
   if(!rp.on&&PEND.length){PEND=[];drawPend()}
@@ -744,7 +750,8 @@ function sltLoop(){
     if((rp.on||MT5.ok)!==SLT.ron){SLT.ron=rp.on||MT5.ok;if(SLT.ron&&!subj())mkDraft();buildTrade()}
     if($('tsp')){const v=lastPx().toFixed(DEC),lv=MT5.ok&&!rp.on&&MT5.tick;$('tsp').textContent=v;if($('tbp'))$('tbp').textContent=lv?MT5.tick.ask.toFixed(DEC):v}
     if($('tplay'))$('tplay').textContent=$('rplay').textContent;
-    if(Date.now()>MSGT&&$('tst'))$('tst').textContent=(MT5.ok&&!rp.on&&MT5.acc)?((MT5.acc.demo?'DEMO':'REAL')+' · '+(+MT5.acc.equity).toFixed(2)+' · P/L '+(+MT5.acc.profit).toFixed(2)):$('rst').textContent.split(' · ').slice(0,2).join(' · ');
+    if($('trr')&&DRAFT&&DRAFT.sl!=null){const slp=Math.abs(DRAFT.entry-DRAFT.sl)/PIP,rk=slp*PV*DRAFT.lots,rw=DRAFT.tp!=null?Math.abs(DRAFT.tp-DRAFT.entry)/PIP*PV*DRAFT.lots:0;$('trr').textContent='ریسک '+rk.toFixed(2)+'$'+(rw?' · ریوارد '+rw.toFixed(2)+'$ · R:R '+(rw/rk).toFixed(1):'')}
+    if(Date.now()>MSGT&&$('tst'))$('tst').textContent=(MT5.ok&&!rp.on&&MT5.acc)?((MT5.acc.demo?'DEMO':'REAL')+' · '+(+MT5.acc.equity).toFixed(2)+' · P/L '+(+MT5.acc.profit).toFixed(2)+(MT5.tick?' · sp '+((MT5.tick.ask-MT5.tick.bid)/PIP).toFixed(1):'')):$('rst').textContent.split(' · ').slice(0,2).join(' · ');
   }
   requestAnimationFrame(sltLoop);
 }
@@ -811,16 +818,17 @@ function buildTrade(){
   if(!rp.on&&!MT5.ok){DRAFT=null;t.innerHTML='<div class="row"><span class="mut" style="flex:1">معامله فقط در Replay ممکن است.</span><button id="tstart">شروع Replay</button><button id="tcl">✕</button></div>';
     $('tstart').onclick=()=>{startReplay()};$('tcl').onclick=closeTrade;return}
   let h='<div class="row" style="flex-wrap:nowrap"><b dir="ltr">'+SYM+'</b><span id="tst" class="mut" style="flex:1;text-align:center;font-size:11px"></span><button id="tplay">▶</button><button id="tstep">⏭</button><button id="tcl">✕</button></div>';
-  if(rp.pos||lpos())h+='<div class="row"><button id="tcp" style="flex:1">بستن معامله</button></div>';
+  if(rp.pos||lpos())h+='<div class="row"><button id="tcp" style="flex:1">بستن معامله</button></div><div class="row"><button id="trf">ریسک‌فری</button><button id="thf">بستن ½</button><button id="ttr">تریلینگ: خاموش</button><button id="tca">بستن همه</button></div>';
   else if(!DRAFT)h+='<div class="row"><button id="tnew" style="flex:1">+ سفارش جدید</button></div>';
   else{
     h+=`<div class="row" style="flex-wrap:nowrap"><button class="sb" id="tsell" style="background:#dc2626">SELL<br><span id="tsp"></span></button><div class="row" style="flex:1;justify-content:center;flex-wrap:nowrap"><button id="tlm">−</button><input id="tlot" type="number" step="0.01" value="${DRAFT.lots}" style="width:60px;text-align:center"><button id="tlp">+</button></div><button class="sb" id="tbuy" style="background:#2563eb">BUY<br><span id="tbp"></span></button></div>`;
-    h+='<div class="row"><button class="circ" id="ttp" style="border-color:#16a34a;color:#16a34a">TP</button><button class="circ" id="tsl" style="border-color:#dc2626;color:#dc2626">SL</button></div>';
+    h+='<div class="row"><button class="circ" id="ttp" style="border-color:#16a34a;color:#16a34a">TP</button><button class="circ" id="tsl" style="border-color:#dc2626;color:#dc2626">SL</button></div><div class="row"><span class="mut">ریسک٪</span><input id="trk" type="number" step="0.1" value="'+$('rkp').value+'" style="width:60px"><button id="tauto">لات از ریسک</button></div><div id="trr" class="mut" style="font-size:11px"></div>';
     h+='<div class="row" style="flex-wrap:nowrap;overflow-x:auto">'+Object.keys(OT).map(k=>`<button data-o="${k}" class="${k===tOT?'on':''}">${OT[k][0]}</button>`).join('')+'</div>';
   }
   h+='<div id="tpl"></div>';t.innerHTML=h;
   $('tcl').onclick=closeTrade;$('tplay').onclick=()=>$('rplay').click();$('tstep').onclick=()=>$('rstep').click();
   if($('tcp'))$('tcp').onclick=()=>{if(lpos())liveClose();else{closePos(base[rp.i].close,'MAN');status()}buildTrade()};
+  if($('trf')){$('trf').onclick=riskFree;$('thf').onclick=halfClose;$('ttr').onclick=toggleTrail;$('tca').onclick=closeAll;$('ttr').textContent='تریلینگ: '+(TRAIL?'روشن':'خاموش')}
   if($('tnew'))$('tnew').onclick=()=>{mkDraft();buildTrade()};
   if(DRAFT){
     const D0=DRAFT;
@@ -830,6 +838,7 @@ function buildTrade(){
     $('ttp').onclick=()=>{const dir=D0.side==='B'?1:-1;D0.tp=D0.tp==null?D0.entry+dir*(+$('tpp').value||40)*PIP:null;tglStyle()};
     $('tsl').onclick=()=>{const dir=D0.side==='B'?1:-1;D0.sl=D0.sl==null?D0.entry-dir*(+$('slp').value||20)*PIP:null;tglStyle()};
     document.querySelectorAll('[data-o]').forEach(b=>b.onclick=()=>{tOT=b.dataset.o;mkDraft();buildTrade()});
+    $('tauto').onclick=autoLot;
     if(D0.pending){$('tsell').style.display='none';$('tbuy').textContent='ثبت '+OTN[D0.type];$('tbuy').style.background=D0.side==='B'?'#2563eb':'#dc2626';$('tbuy').onclick=placePending}
     else{$('tsell').onclick=()=>placeMarket('S');$('tbuy').onclick=()=>placeMarket('B')}
     tglStyle();
@@ -850,7 +859,7 @@ function openTF(){
 }
 function openMenu(){
   const dl=$('dlg');
-  const it=[['Replay',()=>qs('rp')],['ژورنال معاملات',()=>qs('jr')],['ریسک و حجم',()=>qs('rk')],['+ سطح افقی',()=>$('lvl').click()],['پاک‌کردن سطوح',()=>$('clr').click()],['بارگذاری CSV',()=>$('csvb').click()],['دیتای زنده و تاریخچه',()=>$('apib')&&$('apib').click()],['اتصال MT5 (VPS)'+(MT5.ok?' ✓':''),openMT5],['قیمت زنده: '+(LIVE?'روشن':'خاموش'),toggleLive],['تنظیمات چارت',openSettings]];
+  const it=[['Replay',()=>qs('rp')],['ژورنال معاملات',()=>qs('jr')],['ریسک و حجم',()=>qs('rk')],['+ سطح افقی',()=>$('lvl').click()],['پاک‌کردن سطوح',()=>$('clr').click()],['بارگذاری CSV',()=>$('csvb').click()],['دیتای زنده و تاریخچه',()=>$('apib')&&$('apib').click()],['اتصال MT5 (VPS)'+(MT5.ok?' ✓':''),openMT5],['قیمت زنده: '+(LIVE?'روشن':'خاموش'),toggleLive],['لیست قیمت‌ها',openWatch],['پشتیبان‌گیری و بازیابی',openBackup],['تمام‌صفحه',toggleFS],['تنظیمات چارت',openSettings]];
   dl.innerHTML='<div class="row" style="justify-content:space-between"><button id="dcl">←</button><b>منو</b></div>'+it.map((x,i)=>`<button class="tl" data-i="${i}">${x[0]}</button>`).join('');
   dl.style.display='block';$('dcl').onclick=()=>dl.style.display='none';
   dl.querySelectorAll('[data-i]').forEach(b=>b.onclick=()=>{dl.style.display='none';it[+b.dataset.i][1]()});
@@ -862,13 +871,21 @@ function openSettings(){
 <label class="row"><span class="mut" style="flex:1">رنگ کندل نزولی</span><input type="color" id="s_dn" value="${c.dn||'#dc2626'}"></label><h4>نمایش</h4>
 <label class="row"><span class="mut" style="flex:1">خطوط شبکه</span><input type="checkbox" id="s_grid"${c.grid===0?'':' checked'}></label>
 <label class="row"><span class="mut" style="flex:1">برچسب منبع دیتا</span><input type="checkbox" id="s_badge"${c.badge===0?'':' checked'}></label>
+<h4>نمودار</h4>
+<label class="row"><span class="mut" style="flex:1">نوع نمودار</span><select id="s_ct">${[['candles','کندل'],['hollow','کندل توخالی'],['heikin','هایکن‌آشی'],['line','خطی'],['area','ناحیه‌ای']].map(([v,l])=>`<option value="${v}"${(c.ct||'candles')===v?' selected':''}>${l}</option>`).join('')}</select></label>
+<label class="row"><span class="mut" style="flex:1">مقیاس لگاریتمی</span><input type="checkbox" id="s_log"${c.log?' checked':''}></label>
+<label class="row"><span class="mut" style="flex:1">خطوط Bid و Ask (MT5)</span><input type="checkbox" id="s_ba"${c.ba===0?'':' checked'}></label>
+<label class="row"><span class="mut" style="flex:1">صدای هشدار</span><input type="checkbox" id="s_snd"${c.snd===0?'':' checked'}></label>
+<h4>ساعت</h4>
+<label class="row"><span class="mut" style="flex:1">منطقه زمانی نمودار</span><select id="s_tz">${[['utc','UTC'],['tehran','تهران (+3:30)'],['local','ساعت گوشی'],['broker','ساعت سرور بروکر']].map(([v,l])=>`<option value="${v}"${(c.tz||'utc')===v?' selected':''}>${l}</option>`).join('')}</select></label>
+<label class="row"><span class="mut" style="flex:1">اختلاف سرور بروکر با UTC (ساعت)</span><input type="number" id="s_tzh" step="0.5" style="width:70px" value="${c.tzh||0}"></label>
 <label class="row"><span class="mut" style="flex:1">پوسته</span><select id="s_theme">${[['auto','خودکار'],['light','روشن'],['dark','تیره']].map(([v,l])=>`<option value="${v}"${(c.theme||'auto')===v?' selected':''}>${l}</option>`).join('')}</select></label>
 <div class="row" style="justify-content:center;margin-top:16px"><button id="s_rs">تنظیم به حالت پیش‌فرض</button></div>`;
   dl.style.display='block';
   const apply=()=>{try{localStorage.setItem('fx_set',JSON.stringify(SET))}catch(e){}
     if(SET.theme==='light'||SET.theme==='dark')document.documentElement.dataset.theme=SET.theme;else document.documentElement.removeAttribute('data-theme');
-    theme();SB.style.display=SET.badge===0?'none':'block'};
-  $('dok').onclick=()=>{SET.up=$('s_up').value;SET.dn=$('s_dn').value;SET.grid=$('s_grid').checked?1:0;SET.badge=$('s_badge').checked?1:0;SET.theme=$('s_theme').value;apply();dl.style.display='none'};
+    theme();applyTZ();applyCT();SB.style.display=SET.badge===0?'none':'block'};
+  $('dok').onclick=()=>{SET.up=$('s_up').value;SET.dn=$('s_dn').value;SET.grid=$('s_grid').checked?1:0;SET.badge=$('s_badge').checked?1:0;SET.theme=$('s_theme').value;SET.ct=$('s_ct').value;SET.log=$('s_log').checked?1:0;SET.tz=$('s_tz').value;SET.tzh=+$('s_tzh').value||0;SET.ba=$('s_ba').checked?1:0;SET.snd=$('s_snd').checked?1:0;apply();dl.style.display='none'};
   $('s_rs').onclick=()=>{Object.keys(SET).forEach(k=>delete SET[k]);apply();openSettings()};
 }
 (()=>{
@@ -889,7 +906,7 @@ function applyTick(p){
   const k=key(base[base.length-1].time,tf),b2=D[D.length-1];
   if(b2&&b2.time===k){if(p>b2.high)b2.high=p;if(p<b2.low)b2.low=p;b2.close=p;b2.li=base.length-1}
   else D.push({time:k,open:p,high:p,low:p,close:p,fi:base.length-1,li:base.length-1});
-  candles.update(D[D.length-1]);stepMAs();Object.keys(IND).forEach(calcInd);badge();
+  updLast();stepMAs();Object.keys(IND).forEach(calcInd);badge();
   checkAlerts(LPX,p);LPX=p;
 }
 async function pollPrice(){
@@ -930,7 +947,7 @@ function startMtPoll(){
     if(!MT5.ok)return;
     try{
       MT5.tick=await mt('/api/tick?symbol='+encodeURIComponent(MT5S(SYM)));
-      if(!rp.on&&D.length&&LIVEMODE())applyTick(MT5.tick.bid);
+      if(!rp.on&&D.length&&LIVEMODE())applyTick(MT5.tick.bid);baLines();if(LPOS)trailTick(LPOS.side==='B'?MT5.tick.bid:MT5.tick.ask);
       if(n++%2===0){const p=await mt('/api/positions');MT5.pos=p.positions;MT5.orders=p.orders;Object.assign(MT5.acc,{balance:p.balance,equity:p.equity,profit:p.profit});syncLpos()}
     }catch(e){}
   },1500);
@@ -970,6 +987,133 @@ function openMT5(){
     else $('m_st').textContent='✗ '+MT5.err};
   $('m_off').onclick=()=>{MT5.ok=false;clearInterval(MTT);LPOS=null;MT5.pos=[];MT5.orders=[];try{localStorage.removeItem('fx_mt5')}catch(e){}drawPend();$('m_st').textContent='قطع شد'};
 }
+
+// ===== امکانات تکمیلی: ساعت، نوع نمودار، خط‌کش، ریسک، مدیریت معامله، لیست قیمت، پشتیبان، ژورنال، هشدار =====
+let PV=10,TRAIL=false,TRDIST=0,BLn=null,ALn=null;
+const p2=n=>String(n).padStart(2,'0'),MONN=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const tzOff=()=>SET.tz==='tehran'?12600:SET.tz==='local'?-new Date().getTimezoneOffset()*60:SET.tz==='broker'?Math.round((+SET.tzh||0)*3600):0;
+function fmtT(t){const d=new Date((t+tzOff())*1000);return d.getUTCFullYear()+'-'+p2(d.getUTCMonth()+1)+'-'+p2(d.getUTCDate())+' '+p2(d.getUTCHours())+':'+p2(d.getUTCMinutes())}
+function fmtDur(s){const d=Math.floor(s/86400),h=Math.floor(s%86400/3600),m=Math.floor(s%3600/60);return(d?d+'d ':'')+(h?h+'h ':'')+((m||(!d&&!h))?m+'m':'')}
+function applyTZ(){chart.applyOptions({localization:{timeFormatter:t=>typeof t==='number'?fmtT(t):''},timeScale:{tickMarkFormatter:(t,ty)=>{const d=new Date((t+tzOff())*1000);return ty<=0?String(d.getUTCFullYear()):ty===1?MONN[d.getUTCMonth()]:ty===2?String(d.getUTCDate()):p2(d.getUTCHours())+':'+p2(d.getUTCMinutes())}}})}
+applyTZ();
+// نوع نمودار
+const lineS=chart.addLineSeries({color:'#2563eb',lineWidth:2,priceLineVisible:false,lastValueVisible:false,crosshairMarkerVisible:false,visible:false});
+const areaS=chart.addAreaSeries({lineColor:'#2563eb',topColor:'rgba(37,99,235,.3)',bottomColor:'rgba(37,99,235,0)',lineWidth:2,priceLineVisible:false,lastValueVisible:false,crosshairMarkerVisible:false,visible:false});
+const ctOf=()=>SET.ct||'candles';
+function haData(d){const o=[];let po=null,pc=null;for(const b of d){const c=(b.open+b.high+b.low+b.close)/4,op=po==null?(b.open+b.close)/2:(po+pc)/2;o.push({time:b.time,open:op,high:Math.max(b.high,op,c),low:Math.min(b.low,op,c),close:c});po=op;pc=c}return o}
+const dispData=d=>ctOf()==='heikin'?haData(d):d;
+function applyCT(){
+  const ct=ctOf(),up=SET.up||css('--up'),dn=SET.dn||css('--dn'),Z='rgba(0,0,0,0)';
+  candles.applyOptions(ct==='line'||ct==='area'?{upColor:Z,downColor:Z,borderUpColor:Z,borderDownColor:Z,wickUpColor:Z,wickDownColor:Z,borderVisible:true}:ct==='hollow'?{upColor:Z,downColor:dn,borderUpColor:up,borderDownColor:dn,wickUpColor:up,wickDownColor:dn,borderVisible:true}:{upColor:up,downColor:dn,borderUpColor:up,borderDownColor:dn,wickUpColor:up,wickDownColor:dn,borderVisible:false});
+  lineS.applyOptions({visible:ct==='line'});areaS.applyOptions({visible:ct==='area'});
+  candles.priceScale().applyOptions({mode:SET.log?1:0});
+  const cl=D.map(b=>({time:b.time,value:b.close}));lineS.setData(ct==='line'?cl:[]);areaS.setData(ct==='area'?cl:[]);
+}
+function updLast(){const l=D[D.length-1];if(!l)return;const ct=ctOf();
+  if(ct==='heikin')candles.setData(haData(D));else candles.update(l);
+  if(ct==='line')lineS.update({time:l.time,value:l.close});if(ct==='area')areaS.update({time:l.time,value:l.close})}
+function updPV(){PV=10;if(MT5.ok)mt('/api/symbol?symbol='+encodeURIComponent(MT5S(SYM))).then(j=>{if(j.tick_size>0&&j.tick_value>0)PV=j.tick_value*PIP/j.tick_size}).catch(()=>{})}
+// تمام‌صفحه
+function toggleFS(){
+  const on=document.body.classList.toggle('fs');let b=$('fsb');
+  if(!b){b=document.createElement('button');b.id='fsb';b.textContent='⤡';b.style.cssText='position:absolute;top:30px;right:6px;z-index:9;padding:4px 10px;opacity:.8';b.onclick=toggleFS;$('chart').appendChild(b)}
+  b.style.display=on?'block':'none';
+  try{if(on&&document.documentElement.requestFullscreen)document.documentElement.requestFullscreen();else if(document.fullscreenElement)document.exitFullscreen()}catch(e){}
+}
+// مدیریت معامله
+const curPos=()=>rp.pos||lpos();
+function riskFree(){const p=curPos();if(!p)return;p.sl=p.entry;if(p.live)liveModify();else msg('SL به نقطه ورود رفت')}
+async function halfClose(){
+  const p=curPos();if(!p)return;const h=+(p.lots/2).toFixed(2);if(h<0.01){msg('حجم برای نصف کردن کم است');return}
+  if(p.live){if(!confirm('بستن '+h+' لات؟'))return;try{await mt('/api/close',{ticket:p.ticket,volume:h});flash('نیمی از حجم بسته شد')}catch(e){flash(e.message)}}
+  else{const pr=base[rp.i].close,d=p.side==='B'?1:-1,pips=(pr-p.entry)*d/pip();trades.push({side:p.side,entry:p.entry,exit:pr,pips:+pips.toFixed(1),pnl:+(pips*PV*h).toFixed(2),xt:base[rp.i].time,why:'½'});save();p.lots=+(p.lots-h).toFixed(2);status();buildTrade()}
+}
+async function closeAll(){
+  if(!rp.on&&MT5.ok){if(!confirm('همه معامله‌ها بسته و سفارش‌های پندینگ لغو شوند؟'))return;try{for(const x of MT5.pos)await mt('/api/close',{ticket:x.ticket});for(const o of MT5.orders)await mt('/api/cancel',{ticket:o.ticket});MTSIG='';flash('همه بسته شد')}catch(e){flash(e.message)}}
+  else{if(rp.pos)closePos(base[rp.i].close,'ALL');PEND=[];drawPend();status();buildTrade()}
+}
+function toggleTrail(){const p=curPos();if(!p||!p.sl){msg('اول SL داشته باشید');return}TRAIL=!TRAIL;TRDIST=Math.max(Math.abs(p.entry-p.sl),(+$('slp').value||20)*PIP);$('ttr').textContent='تریلینگ: '+(TRAIL?'روشن':'خاموش')}
+let TRB=false;
+function trailTick(price){
+  const p=curPos();if(!TRAIL||!p||!p.sl||TRB)return;const d=p.side==='B'?1:-1,ns=price-d*TRDIST;
+  if((ns-p.sl)*d>PIP){p.sl=ns;if(p.live){TRB=true;liveModify().finally(()=>TRB=false)}}
+}
+function baLines(){
+  const on=MT5.ok&&!rp.on&&MT5.tick&&SET.ba!==0;
+  if(!on){[BLn,ALn].forEach(l=>{if(l)try{candles.removePriceLine(l)}catch(e){}});BLn=ALn=null;return}
+  if(!BLn){BLn=candles.createPriceLine({price:MT5.tick.bid,color:'#2563eb',lineWidth:1,lineStyle:3,axisLabelVisible:true,title:'BID'});ALn=candles.createPriceLine({price:MT5.tick.ask,color:'#dc2626',lineWidth:1,lineStyle:3,axisLabelVisible:true,title:'ASK'})}
+  else{BLn.applyOptions({price:MT5.tick.bid});ALn.applyOptions({price:MT5.tick.ask})}
+}
+// لات از ریسک
+function autoLot(){
+  const d=DRAFT;if(!d)return;if(d.sl==null){msg('اول SL را فعال کنید');return}
+  const slp=Math.abs(d.entry-d.sl)/PIP,r=+$('trk').value||1;
+  const eq=(!rp.on&&MT5.ok&&MT5.acc)?+MT5.acc.equity:bal0()+trades.reduce((s,t)=>s+t.pnl,0);
+  d.lots=Math.max(.01,+(eq*r/100/(slp*PV)).toFixed(2));$('tlot').value=d.lots;$('lot').value=d.lots;
+}
+// لیست قیمت‌ها
+let WT=null;
+function openWatch(){
+  const dl=$('dlg');dl.innerHTML='<div class="row" style="justify-content:space-between"><button id="dcl">←</button><b>لیست قیمت‌ها</b></div><div id="wl" class="mut">در حال دریافت...</div>';dl.style.display='block';
+  const close=()=>{clearInterval(WT);dl.style.display='none'};$('dcl').onclick=close;
+  const draw=rows=>{$('wl').innerHTML=rows.map(r=>`<div class="wr" data-s="${r.s}"><b dir="ltr">${r.s}</b><span dir="ltr">${r.v}</span><span dir="ltr" class="${r.c>0?'p':r.c<0?'n':''}">${r.c!=null?r.c.toFixed(2)+'%':''}</span></div>`).join('');$('wl').querySelectorAll('.wr').forEach(x=>x.onclick=()=>{close();loadSymbol(x.dataset.s)})};
+  const load=async()=>{try{
+    if(MT5.ok){const a=await mt('/api/watch?symbols='+ALLS.map(MT5S).join(','));draw(a.map(r=>({s:r.symbol.slice(0,r.symbol.length-(MT5.suf||'').length),v:r.bid,c:r.chg})))}
+    else{const key=localStorage.getItem('td_key');if(!key){$('wl').textContent='برای لیست قیمت، کلید Twelve Data یا اتصال MT5 لازم است.';return}
+      const L=ALLS.filter(s=>/^[A-Z]{6}$/.test(s)).slice(0,8),j=await(await fetch('https://api.twelvedata.com/price?symbol='+L.map(s=>s.slice(0,3)+'/'+s.slice(3)).join(',')+'&apikey='+key)).json();
+      draw(L.map(s=>{const o=j[s.slice(0,3)+'/'+s.slice(3)];return{s,v:o&&o.price?(+o.price).toFixed(5):'—',c:null}}))}
+  }catch(e){$('wl').textContent='خطا: '+e.message}};
+  load();WT=setInterval(load,MT5.ok?3000:15000);
+}
+// پشتیبان‌گیری
+function openBackup(){
+  const dl=$('dlg');
+  dl.innerHTML=`<div class="row" style="justify-content:space-between"><button id="dcl">←</button><b>پشتیبان‌گیری و بازیابی</b></div><p class="mut">ترسیم‌ها، هشدارها، تنظیمات، ژورنال و اندیکاتورها ذخیره می‌شوند. کلید API و توکن MT5 عمداً شامل نمی‌شوند.</p>
+<div class="row"><button id="b_cp">کپی در کلیپ‌بورد</button><button id="b_dl">ذخیره فایل</button></div>
+<textarea id="b_tx" dir="ltr" style="width:100%;height:110px;font-size:11px" placeholder="برای بازیابی، متن پشتیبان را اینجا بچسبانید"></textarea>
+<div class="row"><button id="b_im">بازیابی از متن</button><button id="b_fl">بازیابی از فایل</button></div><input type="file" id="b_f" accept=".json,.txt" style="display:none">`;
+  dl.style.display='block';$('dcl').onclick=()=>dl.style.display='none';
+  const dump=()=>{const o={};for(let i=0;i<localStorage.length;i++){const k=localStorage.key(i);if(/^(fx_|h_|td_iv|push_)/.test(k)&&k!=='fx_mt5')o[k]=localStorage.getItem(k)}return JSON.stringify({app:'fxchart',v:1,data:o})};
+  const restore=t=>{try{const j=JSON.parse(t);if(j.app!=='fxchart')throw 0;Object.keys(j.data).forEach(k=>{if(/^(fx_|h_|td_iv|push_)/.test(k)&&k!=='fx_mt5')localStorage.setItem(k,j.data[k])});location.reload()}catch(e){flash('فایل پشتیبان معتبر نیست')}};
+  $('b_cp').onclick=async()=>{const t=dump();$('b_tx').value=t;try{await navigator.clipboard.writeText(t);flash('کپی شد')}catch(e){flash('متن را از کادر کپی کنید')}};
+  $('b_dl').onclick=()=>{const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([dump()],{type:'application/json'}));a.download='fxchart-backup.json';document.body.appendChild(a);a.click();a.remove();$('b_tx').value=dump()};
+  $('b_im').onclick=()=>restore($('b_tx').value);
+  $('b_fl').onclick=()=>$('b_f').click();$('b_f').onchange=e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=()=>restore(String(r.result));r.readAsText(f)};
+}
+// ژورنال (جایگزین)
+function renderJ(){
+  const n=trades.length,w=trades.filter(t=>t.pnl>0),l=trades.filter(t=>t.pnl<=0);
+  const gp=w.reduce((s,t)=>s+t.pnl,0),gl=-l.reduce((s,t)=>s+t.pnl,0);
+  let eq=0,pk=0,dd=0;trades.forEach(t=>{eq+=t.pnl;pk=Math.max(pk,eq);dd=Math.max(dd,pk-eq)});
+  $('jst').innerHTML=n?`تعداد: ${n} · وین‌ریت: ${(w.length/n*100).toFixed(0)}٪ · امید ریاضی: ${(eq/n).toFixed(2)}$ به ازای هر معامله<br>ضریب سود: ${gl?(gp/gl).toFixed(2):'∞'} · حداکثر دراودان: ${dd.toFixed(2)}$ · جمع: ${eq.toFixed(2)}$`:'هنوز معامله‌ای ثبت نشده. در Replay معامله کنید.';
+  let e0=0;const pts=[0].concat(trades.map(t=>e0+=t.pnl)),mx=Math.max(...pts),mn=Math.min(...pts),W=300,H=60;
+  const sx=i=>pts.length>1?i*W/(pts.length-1):0,sy=v=>mx===mn?H/2:H-(v-mn)/(mx-mn)*(H-6)-3;
+  if($('jeq'))$('jeq').innerHTML=n?`<svg viewBox="0 0 ${W} ${H}" width="100%" height="60"><polyline fill="none" stroke="var(--ac)" stroke-width="2" points="${pts.map((v,i)=>sx(i).toFixed(1)+','+sy(v).toFixed(1)).join(' ')}"/></svg>`:'';
+  $('jtb').innerHTML=trades.map((t,i)=>({t,i})).slice(-30).reverse().map(({t,i})=>`<tr data-i="${i}"><td>${i+1}</td><td>${t.side==='B'?'خرید':'فروش'}</td><td>${t.entry.toFixed(DEC)}</td><td>${t.exit.toFixed(DEC)} ${t.why}</td><td class="${t.pnl>0?'p':'n'}">${t.pips}</td><td class="${t.pnl>0?'p':'n'}">${t.pnl}</td><td>${t.note?'📝':''}</td></tr>`).join('');
+}
+$('jtb').onclick=e=>{const tr=e.target.closest('tr');if(!tr)return;const t=trades[+tr.dataset.i];if(!t)return;const nt=prompt('یادداشت معامله:',t.note||'');if(nt!==null){t.note=nt;save();renderJ()}};
+(()=>{const b=document.createElement('button');b.id='jcsv';b.textContent='خروجی CSV';$('jclr').parentNode.appendChild(b);
+  b.onclick=async()=>{const c='side,entry,exit,pips,pnl,reason,time,note\n'+trades.map(t=>[t.side,t.entry,t.exit,t.pips,t.pnl,t.why,fmtT(t.xt),'"'+(t.note||'').replace(/"/g,'""')+'"'].join(',')).join('\n');try{await navigator.clipboard.writeText(c);flash('CSV کپی شد')}catch(e){const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([c],{type:'text/csv'}));a.download='journal.csv';a.click()}}})();
+// هشدار پیشرفته (جایگزین)
+function beep(){if(SET.snd===0)return;try{const c=new(window.AudioContext||window.webkitAudioContext)();[0,.25,.5].forEach(s=>{const o=c.createOscillator(),g=c.createGain();o.frequency.value=880;g.gain.value=.15;o.connect(g);g.connect(c.destination);o.start(c.currentTime+s);o.stop(c.currentTime+s+.15)})}catch(e){}}
+function fire(a){
+  const m='🔔 '+SYM+' → '+a.price.toFixed(DEC),t=$('toast');
+  a.on=false;if(a.rep)setTimeout(()=>{a.on=true;saveState();drawAlerts();listAlerts()},60000);
+  saveState();drawAlerts();listAlerts();t.textContent=m;t.style.display='block';setTimeout(()=>t.style.display='none',7000);
+  try{navigator.vibrate&&navigator.vibrate([200,100,200])}catch(e){}beep();
+  try{if(window.Notification&&Notification.permission==='granted')new Notification(m)}catch(e){}
+}
+function addAlert(pr){pr=+pr;if(!(pr>0))return;try{window.Notification&&Notification.permission==='default'&&Notification.requestPermission()}catch(e){}const a={id:Date.now(),price:pr,on:true,rep:!!($('al_rep')&&$('al_rep').checked)};ALERTS.push(a);srvAlert(a);saveState();drawAlerts();listAlerts()}
+function listAlerts(){const l=$('all');if(!l)return;l.innerHTML='';ALERTS.forEach(a=>{const r=document.createElement('div');r.className='row';r.innerHTML=`<span dir="ltr">🔔 ${a.price.toFixed(DEC)}${a.rep?' 🔁':''}</span><span class="mut">${a.on?'فعال':'اجراشده'}</span>`;const d=document.createElement('button');d.textContent='حذف';d.onclick=()=>{srvDel(a);ALERTS=ALERTS.filter(z=>z!==a);saveState();drawAlerts();listAlerts()};r.appendChild(d);l.appendChild(r)})}
+(()=>{
+  const al=$('al'),r=document.createElement('label');r.className='row';r.innerHTML='<input type="checkbox" id="al_rep"><span class="mut">تکرارشونده (هر ۶۰ ثانیه دوباره فعال شود)</span>';al.insertBefore(r,$('all'));
+  const dr=$('dr'),row=document.createElement('div');row.className='row';
+  const mkb=(t,f)=>{const b=document.createElement('button');b.textContent=t;b.onclick=f;row.appendChild(b);return b};
+  const hb=mkb('مخفی‌کردن ترسیم‌ها',()=>{DR.hide=!DR.hide;hb.textContent=DR.hide?'نمایش ترسیم‌ها':'مخفی‌کردن ترسیم‌ها';drawPrim.rq&&drawPrim.rq()});
+  const lb=mkb('قفل ترسیم‌ها',()=>{DR.lock=!DR.lock;lb.textContent=DR.lock?'بازکردن قفل':'قفل ترسیم‌ها'});
+  mkb('هشدار روی خط انتخاب‌شده',()=>{const s=DR.items[DR.sel];if(s&&s.k==='hline')addAlert(s.p1);else flash('یک خط افقی را انتخاب کنید')});
+  dr.insertBefore(row,dr.lastElementChild);
+})();
 
 let ST={};try{ST=JSON.parse(localStorage.getItem('fx_state')||'{}')||{}}catch(e){}
 syncTF();
