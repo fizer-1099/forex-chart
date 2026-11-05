@@ -121,14 +121,15 @@ def tick():
 
 @app.get("/api/positions")
 def positions():
+    off = offset()
     ps = [dict(ticket=p.ticket, symbol=p.symbol, side="B" if p.type == mt5.POSITION_TYPE_BUY else "S",
-               lots=p.volume, price=p.price_open, sl=p.sl, tp=p.tp, profit=p.profit, current=p.price_current)
+               lots=p.volume, price=p.price_open, sl=p.sl, tp=p.tp, profit=p.profit, current=p.price_current, swap=p.swap, time=p.time - off)
           for p in (mt5.positions_get() or [])]
     os_ = [dict(ticket=o.ticket, symbol=o.symbol, type=PEND_BACK[o.type][0], side=PEND_BACK[o.type][1],
                 lots=o.volume_current, price=o.price_open, sl=o.sl, tp=o.tp)
            for o in (mt5.orders_get() or []) if o.type in PEND_BACK]
     a = mt5.account_info()
-    return jsonify(positions=ps, orders=os_, balance=a.balance, equity=a.equity, profit=a.profit, free=a.margin_free)
+    return jsonify(positions=ps, orders=os_, balance=a.balance, equity=a.equity, profit=a.profit, free=a.margin_free, margin=a.margin, level=a.margin_level)
 
 
 def fill_mode(sym, pending):
@@ -253,6 +254,23 @@ def watch():
     return jsonify(out)
 
 
+@app.get("/api/history")
+def history():
+    from datetime import datetime
+    t0, t1 = int(request.args["from"]), int(request.args["to"])
+    off = offset()
+    deals = mt5.history_deals_get(datetime.utcfromtimestamp(t0 - 2 * 86400), datetime.utcfromtimestamp(t1 + 2 * 86400))
+    out = []
+    for d in (deals or []):
+        ts = d.time - off
+        if ts < t0 or ts > t1 or d.type not in (mt5.DEAL_TYPE_BUY, mt5.DEAL_TYPE_SELL):
+            continue
+        out.append(dict(ticket=d.ticket, pos=d.position_id, time=ts, symbol=d.symbol,
+                        side="B" if d.type == mt5.DEAL_TYPE_BUY else "S", entry=d.entry, lots=d.volume,
+                        price=d.price, profit=d.profit, comm=d.commission, swap=d.swap, fee=getattr(d, "fee", 0)))
+    return jsonify(out)
+
+
 @app.get("/api/margin")
 def margin():
     sym, side, lots = request.args["symbol"], request.args.get("side", "B"), float(request.args["lots"])
@@ -264,6 +282,24 @@ def margin():
     if m is None:
         return jsonify(error=str(mt5.last_error())), 400
     return jsonify(margin=m, free=mt5.account_info().margin_free)
+
+
+@app.post("/api/modifyorder")
+def modifyorder():
+    g = guard()
+    if g:
+        return jsonify(error=g), 403
+    d = request.get_json(force=True)
+    o = mt5.orders_get(ticket=int(d["ticket"]))
+    if not o:
+        return jsonify(error="سفارش پیدا نشد"), 404
+    sl = float(d.get("sl") or 0)
+    if sl <= 0:
+        return jsonify(error="حد ضرر (SL) الزامی است"), 400
+    req = dict(action=mt5.TRADE_ACTION_MODIFY, order=o[0].ticket, price=float(d["price"]), sl=sl,
+               tp=float(d.get("tp") or 0), type_time=mt5.ORDER_TIME_GTC)
+    with lock:
+        return done(mt5.order_send(req))
 
 
 @app.post("/api/cancel")
