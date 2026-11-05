@@ -80,9 +80,9 @@ app.get('/api/price', async (req, res) => {
 });
 
 app.post('/api/alerts', (req, res) => {
-  const { id, sub, symbol, price, ref } = req.body;
-  if (!sub || !symbol || !(price > 0)) return res.status(400).end();
-  alerts.push({ id, sub, symbol, price: +price, up: +price >= +ref });
+  const { id, sub, symbol, price, ref, tgToken, tgChatId } = req.body;
+  if (!symbol || !(price > 0)) return res.status(400).end();
+  alerts.push({ id, sub, symbol, price: +price, up: +price >= +ref, tgToken, tgChatId });
   save(); res.json({ ok: 1 });
 });
 app.post('/api/alerts/delete', (req, res) => {
@@ -97,12 +97,91 @@ setInterval(async () => {
       const j = await (await fetch(`https://api.twelvedata.com/price?symbol=${encodeURIComponent(q(s))}&apikey=${KEY}`)).json();
       const p = +j.price; if (!p) continue;
       for (const a of alerts.filter(a => a.symbol === s && (a.up ? p >= a.price : p <= a.price))) {
-        await webpush.sendNotification(a.sub, JSON.stringify({ title: '🔔 ' + s, body: `قیمت به ${a.price} رسید (الان ${p})` })).catch(() => {});
+        if (a.sub) await webpush.sendNotification(a.sub, JSON.stringify({ title: '🔔 ' + s, body: `قیمت به ${a.price} رسید (الان ${p})` })).catch(() => {});
+        await sendTelegram(`🔔 <b>هشدار قیمت ${a.symbol}</b>\nقیمت به ${a.price} رسید! (قیمت فعلی: ${p})`, a.tgToken, a.tgChatId);
         alerts = alerts.filter(x => x !== a);
       }
       save();
     } catch (e) {}
   }
 }, 60000);
+
+
+// ===== اخبار اقتصادی (تقویم هفتگی عمومی) با کش ۳۰ دقیقه‌ای =====
+let NEWS={t:0,j:null};
+app.get('/api/news', async (req, res) => {
+  if (NEWS.j && Date.now() - NEWS.t <= 30 * 60000) return res.json(NEWS.j);
+  try {
+    const r = await fetch('https://nfs.faireconomy.media/ff_calendar_thisweek.json', { headers: { 'User-Agent': 'Mozilla/5.0' } });
+    if (!r.ok) throw new Error('news HTTP ' + r.status);
+    NEWS = { t: Date.now(), j: await r.json() };
+    res.json(NEWS.j);
+  } catch (e) {
+    if (NEWS.j) return res.json(NEWS.j); // اگر منبع جواب نداد، آخرین دیتای ذخیره‌شده را بده
+    res.status(502).json({ error: e.message });
+  }
+});
+
+// ===== تحلیل هوش مصنوعی (کلید فقط روی سرور) =====
+app.post('/api/analyze', async (req, res) => {
+  const KEYA = process.env.ANTHROPIC_API_KEY;
+  if (!KEYA) return res.status(500).json({ error: 'ANTHROPIC_API_KEY روی سرور تنظیم نشده' });
+  try {
+    const { symbol = '', candles = [] } = req.body || {};
+    const last = candles.slice(-150);
+    const news = (NEWS.j || []).filter(e => e.impact === 'High' || e.impact === 'Medium')
+      .map(e => `${e.date} | ${e.country} | ${e.impact} | ${e.title} | پیش‌بینی ${e.forecast || '-'} | قبلی ${e.previous || '-'}`).join('\n') || '(خبری در دسترس نیست)';
+    const prompt = `تو یک تحلیلگر بازار مالی هستی. به فارسی، کوتاه و شفاف جواب بده و در انتها یادآوری کن که این تحلیل توصیه سرمایه‌گذاری نیست.
+نماد: ${symbol}
+کندل‌های اخیر (زمان یونیکس ثانیه، open، high، low، close):
+${JSON.stringify(last)}
+اخبار اقتصادی هفته (High و Medium):
+${news}
+
+لطفاً این سه بخش را با عنوان مشخص بنویس:
+۱) تحلیل تکنیکال: روند، سطوح حمایت و مقاومت تقریبی، الگوهای مهم، و نظر کلی کوتاه‌مدت.
+۲) تحلیل اقتصادی: نگاه روزانه و هفتگی بر اساس اخبار و تاثیرشان روی این نماد.
+۳) جمع‌بندی: یک نتیجه کلی و سطوح کلیدی که باید رصد شوند.`;
+    const r = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'x-api-key': KEYA, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+      body: JSON.stringify({ model: process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-5', max_tokens: 1800, messages: [{ role: 'user', content: prompt }] })
+    });
+    const j = await r.json();
+    if (!r.ok) throw new Error((j.error && j.error.message) || ('HTTP ' + r.status));
+    res.json({ text: (j.content || []).map(c => c.text || '').join('\n') });
+  } catch (e) { res.status(502).json({ error: e.message }); }
+});
+
+
+// ===== ربات تلگرام برای هشدارهای قیمتی =====
+async function sendTelegram(text, token, chatId) {
+  const tok = token || process.env.TELEGRAM_BOT_TOKEN;
+  const cid = chatId || process.env.TELEGRAM_CHAT_ID;
+  if (!tok || !cid) return false;
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${tok}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: cid, text, parse_mode: 'HTML' })
+    });
+    return res.ok;
+  } catch (e) {
+    return false;
+  }
+}
+
+app.post('/api/telegram/test', async (req, res) => {
+  const { token, chatId } = req.body || {};
+  const ok = await sendTelegram('🔔 <b>تست ربات تلگرام فارکس چارت</b>\nربات با موفقیت وصل شد و آماده ارسال هشدارهاست!', token, chatId);
+  if (ok) res.json({ ok: 1 });
+  else res.status(400).json({ error: 'ارسال ناموفق بود؛ توکن ربات یا Chat ID را بررسی کنید.' });
+});
+
+app.post('/api/telegram/send', async (req, res) => {
+  const { text, token, chatId } = req.body || {};
+  const ok = await sendTelegram(text, token, chatId);
+  res.json({ ok: ok ? 1 : 0 });
+});
 
 app.listen(PORT, () => console.log('server on', PORT));
