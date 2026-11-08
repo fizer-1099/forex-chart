@@ -3,7 +3,10 @@
 - همه درخواست‌ها نیاز به هدر X-Token دارند.
 - پیش‌فرض: فقط حساب دمو. حساب واقعی فقط با ALLOW_REAL=1.
 """
-import os, time, hmac, threading
+import os, time, hmac, threading, json as _json, urllib.request, urllib.error
+import xml.etree.ElementTree as ET
+from datetime import datetime, timezone, timedelta
+from email.utils import parsedate_to_datetime
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import MetaTrader5 as mt5
@@ -88,7 +91,9 @@ def ping():
         return jsonify(error="MT5 آماده نیست"), 503
     return jsonify(login=a.login, server=a.server, demo=a.trade_mode == mt5.ACCOUNT_TRADE_MODE_DEMO,
                    balance=a.balance, equity=a.equity, currency=a.currency, allow_real=ALLOW_REAL, max_lot=MAX_LOT,
-                   algo=bool(getattr(mt5.terminal_info(), 'trade_allowed', True)))
+                   algo=bool(getattr(mt5.terminal_info(), 'trade_allowed', True)),
+                   ai=bool(os.environ.get("ANTHROPIC_API_KEY")),
+                   tg=bool(os.environ.get("TELEGRAM_BOT_TOKEN") and os.environ.get("TELEGRAM_CHAT_ID")))
 
 
 @app.get("/api/candles")
@@ -312,11 +317,423 @@ def cancel():
         return done(mt5.order_send(req))
 
 
+# ===================== اخبار، تقویم اقتصادی و تحلیل هوشمند =====================
+CACHE = {}
+
+
+def cached(key, ttl, fn):
+    h = CACHE.get(key)
+    if h and time.time() - h[0] < ttl:
+        return h[1]
+    try:
+        v = fn()
+    except Exception:
+        if h:  # اگر دریافت جدید شکست خورد، نسخه قبلی را بده
+            return h[1]
+        raise
+    CACHE[key] = (time.time(), v)
+    return v
+
+
+def http_get(url, timeout=15):
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (fxapp)"})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return r.read()
+
+
+def load_calendar():
+    raw = _json.loads(http_get("https://nfs.faireconomy.media/ff_calendar_thisweek.json"))
+    out = []
+    for e in raw:
+        try:
+            ts = int(datetime.fromisoformat(e["date"].replace("Z", "+00:00")).timestamp())
+        except Exception:
+            continue
+        out.append(dict(title=e.get("title", ""), country=e.get("country", ""), ts=ts, impact=e.get("impact", ""),
+                        forecast=e.get("forecast", ""), previous=e.get("previous", "")))
+    return out
+
+
+FEEDS = ["https://www.fxstreet.com/rss/news", "https://www.forexlive.com/feed/news"]
+
+
+def load_headlines():
+    out = []
+    for u in FEEDS:
+        try:
+            root = ET.fromstring(http_get(u))
+            for it in root.iter("item"):
+                try:
+                    ts = int(parsedate_to_datetime(it.findtext("pubDate") or "").timestamp())
+                except Exception:
+                    ts = 0
+                out.append(dict(title=(it.findtext("title") or "").strip(), link=(it.findtext("link") or "").strip(),
+                                ts=ts, src=u.split("/")[2]))
+        except Exception:
+            continue
+    out.sort(key=lambda x: -x["ts"])
+    if not out:
+        raise RuntimeError("هیچ خبری دریافت نشد")
+    return out[:40]
+
+
+@app.get("/api/calendar")
+def calendar():
+    try:
+        return jsonify(cached("cal", 1800, load_calendar))
+    except Exception as ex:
+        return jsonify(error=f"دریافت تقویم ناموفق بود: {ex}"), 502
+
+
+@app.get("/api/headlines")
+def headlines():
+    try:
+        return jsonify(cached("hl", 600, load_headlines))
+    except Exception as ex:
+        return jsonify(error=f"دریافت اخبار ناموفق بود: {ex}"), 502
+
+
+def _ema(v, n):
+    k, e = 2 / (n + 1), v[0]
+    for x in v[1:]:
+        e = x * k + e * (1 - k)
+    return e
+
+
+def _rsi(c, n=14):
+    g = l = 0.0
+    for i in range(1, n + 1):
+        d = c[i] - c[i - 1]
+        g += max(d, 0)
+        l += max(-d, 0)
+    g, l = g / n, l / n
+    for i in range(n + 1, len(c)):
+        d = c[i] - c[i - 1]
+        g = (g * (n - 1) + max(d, 0)) / n
+        l = (l * (n - 1) + max(-d, 0)) / n
+    return 100.0 if l == 0 else 100 - 100 / (1 + g / l)
+
+
+def _atr(h, l, c, n=14):
+    trs = [max(h[i] - l[i], abs(h[i] - c[i - 1]), abs(l[i] - c[i - 1])) for i in range(1, len(c))]
+    a = sum(trs[:n]) / n
+    for x in trs[n:]:
+        a = (a * (n - 1) + x) / n
+    return a
+
+
+def snapshot(sym):
+    mt5.symbol_select(sym, True)
+    info = mt5.symbol_info(sym)
+    d = info.digits if info else 5
+    res = {}
+    for name, tf, n in (("D1", mt5.TIMEFRAME_D1, 260), ("H4", mt5.TIMEFRAME_H4, 200), ("H1", mt5.TIMEFRAME_H1, 120)):
+        r = mt5.copy_rates_from_pos(sym, tf, 0, n)
+        if r is None or len(r) < 40:
+            continue
+        c = [float(x["close"]) for x in r]
+        h = [float(x["high"]) for x in r]
+        lo = [float(x["low"]) for x in r]
+        res[name] = dict(
+            last=round(c[-1], d), chg_pct_1bar=round((c[-1] / c[-2] - 1) * 100, 3),
+            chg_pct_5bar=round((c[-1] / c[-6] - 1) * 100, 3), ema20=round(_ema(c, 20), d), ema50=round(_ema(c, 50), d),
+            ema200=round(_ema(c, 200), d) if len(c) >= 200 else None, rsi14=round(_rsi(c), 1),
+            atr14=round(_atr(h, lo, c), d), high20=round(max(h[-20:]), d), low20=round(min(lo[-20:]), d),
+            high60=round(max(h[-60:]), d), low60=round(min(lo[-60:]), d))
+    return res
+
+
+def ccy_of(sym):
+    s = "".join(ch for ch in sym if ch.isalpha())[:6].upper()
+    return {s[:3], s[3:6]} if len(s) == 6 else {"USD"}
+
+
+def iran(ts):
+    return (datetime.fromtimestamp(ts, timezone.utc) + timedelta(hours=3, minutes=30)).strftime("%Y-%m-%d %H:%M")
+
+
+def call_claude(prompt):
+    key = os.environ.get("ANTHROPIC_API_KEY")
+    if not key:
+        raise RuntimeError("ANTHROPIC_API_KEY روی VPS تنظیم نشده است (فایل run.bat)")
+    body = _json.dumps({"model": os.environ.get("AI_MODEL", "claude-sonnet-5-5"), "max_tokens": 4500,
+                        "messages": [{"role": "user", "content": prompt}]}).encode()
+    req = urllib.request.Request("https://api.anthropic.com/v1/messages", data=body, headers={
+        "x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=170) as r:
+            j = _json.loads(r.read())
+    except urllib.error.HTTPError as e:
+        raise RuntimeError(f"خطای سرویس هوش مصنوعی {e.code}: {e.read().decode('utf-8', 'ignore')[:300]}")
+    return "".join(b.get("text", "") for b in j.get("content", []) if b.get("type") == "text")
+
+
+@app.post("/api/analyze")
+def analyze():
+    d = request.get_json(force=True)
+    symbols = [s for s in d.get("symbols", []) if isinstance(s, str)][:6]
+    scope = d.get("scope", "both")
+    if not symbols:
+        return jsonify(error="نمادی انتخاب نشده"), 400
+
+    def build():
+        now = int(time.time())
+        cur = set()
+        for s in symbols:
+            cur |= ccy_of(s)
+        try:
+            cal = cached("cal", 1800, load_calendar)
+        except Exception:
+            cal = []
+        evs = [e for e in cal if e["impact"] in ("High", "Medium") and e["country"] in (cur | {"USD"})]
+        if scope == "daily":
+            evs = [e for e in evs if now - 6 * 3600 <= e["ts"] <= now + 36 * 3600]
+        evs = sorted(evs, key=lambda e: e["ts"])[:70]
+        try:
+            news = [h["title"] for h in cached("hl", 600, load_headlines)][:25]
+        except Exception:
+            news = []
+        data = dict(now_utc=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M"), now_iran=iran(now),
+                    symbols={s: snapshot(s) for s in symbols},
+                    calendar=[dict(time_iran=iran(e["ts"]), ccy=e["country"], impact=e["impact"], event=e["title"],
+                                   forecast=e["forecast"], previous=e["previous"]) for e in evs],
+                    headlines=news)
+        want = {"daily": "تحلیل روزانه", "weekly": "تحلیل هفتگی", "both": "تحلیل روزانه و هفتگی"}[scope]
+        prompt = f"""تو یک تحلیل‌گر ارشد بازارهای مالی (فارکس، فلزات، شاخص‌ها و کریپتو) هستی. بر اساس فقط داده‌های زیر (JSON) یک گزارش جامع و منظم به فارسی بنویس. نوع گزارش: {want}.
+
+قواعد:
+- فقط از داده‌های داده‌شده استفاده کن و چیزی از خودت درباره قیمت‌ها یا رویدادهایی که در داده نیست نساز. اگر داده‌ای ناقص بود صریح بگو.
+- ساعت‌ها را به وقت ایران بنویس.
+- قطعی‌گویی نکن؛ سناریوهای صعودی و نزولی، سطوح کلیدی (حمایت و مقاومت از high/low و EMAها) و شرایط ابطال را بگو.
+- قالب: عناوین با ## ، فهرست با - ، متن‌های مهم با **bold**.
+
+بخش‌های گزارش:
+## خلاصه کلی بازار
+## تحلیل اقتصادی (روزانه و هفتگی طبق نوع گزارش): رویدادهای مهم تقویم، ارزهای درگیر، زمان انتشار و اثر احتمالی
+## تحلیل اخبار: جمع‌بندی سرفصل‌ها و موضوعات مسلط بازار
+## تحلیل تکنیکال هر نماد: روند در D1 و H4، RSI، ATR، سطوح کلیدی، سناریوها
+## ریسک‌ها و نکات مدیریت سرمایه
+## جمع‌بندی نهایی (در چند خط)
+در پایان یک جمله بنویس که این تحلیل آموزشی است و توصیه مالی نیست.
+
+داده‌ها:
+{_json.dumps(data, ensure_ascii=False)}"""
+        return call_claude(prompt)
+
+    try:
+        text = cached("ai|" + "|".join(sorted(symbols)) + "|" + scope, 1200, build)
+        return jsonify(text=text)
+    except Exception as ex:
+        return jsonify(error=str(ex)), 502
+
+
+# ===================== تلگرام، هشدار قیمت سمت سرور و محافظ اخبار =====================
+BASE = os.path.dirname(os.path.abspath(__file__))
+
+
+def _load(name, default):
+    try:
+        with open(os.path.join(BASE, name), encoding="utf-8") as f:
+            return _json.load(f)
+    except Exception:
+        return default
+
+
+def _save(name, data):
+    try:
+        with open(os.path.join(BASE, name), "w", encoding="utf-8") as f:
+            _json.dump(data, f, ensure_ascii=False)
+    except Exception:
+        pass
+
+
+def tg_send(text):
+    tok, cid = os.environ.get("TELEGRAM_BOT_TOKEN"), os.environ.get("TELEGRAM_CHAT_ID")
+    if not tok or not cid:
+        return False
+    try:
+        body = _json.dumps({"chat_id": cid, "text": text, "parse_mode": "HTML"}).encode()
+        req = urllib.request.Request(f"https://api.telegram.org/bot{tok}/sendMessage", data=body,
+                                     headers={"content-type": "application/json"})
+        urllib.request.urlopen(req, timeout=15).read()
+        return True
+    except Exception:
+        return False
+
+
+@app.post("/api/telegram/test")
+def tg_test():
+    if tg_send("🔔 <b>تست ربات تلگرام</b>\nپل MT5 با موفقیت به تلگرام وصل است."):
+        return jsonify(ok=1)
+    return jsonify(error="ارسال ناموفق: TELEGRAM_BOT_TOKEN و TELEGRAM_CHAT_ID را در run.bat بررسی کنید و اول به ربات یک پیام بدهید"), 400
+
+
+@app.get("/api/telegram/chatid")
+def tg_chatid():
+    tok = os.environ.get("TELEGRAM_BOT_TOKEN")
+    if not tok:
+        return jsonify(error="TELEGRAM_BOT_TOKEN در run.bat تنظیم نشده است"), 400
+    try:
+        j = _json.loads(http_get(f"https://api.telegram.org/bot{tok}/getUpdates"))
+    except Exception as ex:
+        return jsonify(error=f"ارتباط با تلگرام ناموفق بود: {ex}"), 502
+    ids = {}
+    for u in j.get("result", []):
+        c = (u.get("message") or u.get("channel_post") or {}).get("chat", {})
+        if c.get("id"):
+            ids[c["id"]] = c.get("first_name") or c.get("title") or ""
+    return jsonify([dict(id=k, name=v) for k, v in ids.items()])
+
+
+TALERTS = _load("talerts.json", [])
+tlock = threading.Lock()
+
+
+@app.post("/api/talerts")
+def talerts_add():
+    d = request.get_json(force=True)
+    sym, price = d["symbol"], float(d["price"])
+    ref = d.get("ref")
+    if ref is None:
+        t = mt5.symbol_info_tick(sym)
+        ref = t.bid if t else price
+    with tlock:
+        TALERTS.append(dict(id=d["id"], symbol=sym, price=price, up=price >= float(ref)))
+        _save("talerts.json", TALERTS)
+    return jsonify(ok=1)
+
+
+@app.post("/api/talerts/delete")
+def talerts_del():
+    global TALERTS
+    with tlock:
+        TALERTS = [a for a in TALERTS if a["id"] != request.get_json(force=True)["id"]]
+        _save("talerts.json", TALERTS)
+    return jsonify(ok=1)
+
+
+def talerts_step():
+    with tlock:
+        hit = []
+        for a in TALERTS:
+            t = mt5.symbol_info_tick(a["symbol"])
+            if t and ((a["up"] and t.bid >= a["price"]) or (not a["up"] and t.bid <= a["price"])):
+                hit.append((a, t.bid))
+        for a, p in hit:
+            tg_send(f"🔔 <b>هشدار قیمت {a['symbol']}</b>\nقیمت به {a['price']} رسید (الان {p})")
+            TALERTS.remove(a)
+        if hit:
+            _save("talerts.json", TALERTS)
+    return len(hit)
+
+
+GUARD = dict(enabled=False, mode="warn", before=5, after=2, warn=15, impact="High")
+GUARD.update(_load("guard.json", {}))
+GLOG, GDONE = [], set()
+
+
+def glog(msg):
+    GLOG.append(dict(t=int(time.time()), msg=msg))
+    del GLOG[:-40]
+
+
+def close_pos(p):
+    t = mt5.symbol_info_tick(p.symbol)
+    buy = p.type == mt5.POSITION_TYPE_BUY
+    req = dict(action=mt5.TRADE_ACTION_DEAL, symbol=p.symbol, volume=p.volume, position=p.ticket,
+               type=mt5.ORDER_TYPE_SELL if buy else mt5.ORDER_TYPE_BUY, price=t.bid if buy else t.ask,
+               deviation=30, magic=MAGIC, comment="fxapp guard", type_time=mt5.ORDER_TIME_GTC,
+               type_filling=fill_mode(p.symbol, False))
+    with lock:
+        return mt5.order_send(req)
+
+
+def guard_step(now=None):
+    """هر ۱۵ ثانیه: معامله‌های باز را با خبرهای مهم نزدیک مقایسه می‌کند."""
+    if not GUARD["enabled"] or mt5.account_info() is None:
+        return 0
+    now = now or time.time()
+    try:
+        cal = cached("cal", 1800, load_calendar)
+    except Exception:
+        return 0
+    imp = ("High", "Medium") if GUARD["impact"] == "Medium" else ("High",)
+    evs = [e for e in cal if e["impact"] in imp]
+    acted = 0
+    for p in (mt5.positions_get() or []):
+        cc = ccy_of(p.symbol)
+        for e in sorted(evs, key=lambda x: x["ts"]):
+            if e["country"] not in cc:
+                continue
+            dt = e["ts"] - now
+            if dt > GUARD["warn"] * 60 or dt < -GUARD["after"] * 60:
+                continue
+            label = f"{e['country']} · {e['title']} ({iran(e['ts'])} به وقت ایران)"
+            if dt > GUARD["before"] * 60 or GUARD["mode"] != "close":
+                k = (p.ticket, e["ts"], "w")
+                if k not in GDONE and dt > 0:
+                    GDONE.add(k)
+                    glog(f"هشدار برای {p.symbol}: خبر {label}")
+                    tg_send(f"⚠️ <b>خبر مهم نزدیک است</b>\n{p.symbol} باز است\n{label}\nحدود {int(dt // 60)} دقیقه دیگر")
+                continue
+            g = guard()
+            if g:
+                k = (p.ticket, e["ts"], "b")
+                if k not in GDONE:
+                    GDONE.add(k)
+                    glog(f"بستن {p.symbol} ممکن نشد: {g}")
+                break
+            r = close_pos(p)
+            ok = r is not None and r.retcode in (mt5.TRADE_RETCODE_DONE, mt5.TRADE_RETCODE_PLACED)
+            glog(f"{'بسته شد' if ok else 'بستن ناموفق'}: {p.symbol} #{p.ticket} قبل از خبر {label}")
+            tg_send(f"{'🛡 معامله بسته شد' if ok else '❗ بستن ناموفق'}\n{p.symbol} #{p.ticket}\nقبل از خبر {label}")
+            acted += 1 if ok else 0
+            break
+    return acted
+
+
+@app.get("/api/guard")
+def guard_get():
+    return jsonify(dict(GUARD, log=GLOG[-20:]))
+
+
+@app.post("/api/guard")
+def guard_set():
+    d = request.get_json(force=True)
+    if "enabled" in d:
+        GUARD["enabled"] = bool(d["enabled"])
+    if d.get("mode") in ("warn", "close"):
+        GUARD["mode"] = d["mode"]
+    if d.get("impact") in ("High", "Medium"):
+        GUARD["impact"] = d["impact"]
+    for k, lo, hi in (("before", 1, 60), ("after", 0, 30), ("warn", 1, 120)):
+        if k in d:
+            GUARD[k] = max(lo, min(hi, int(d[k])))
+    _save("guard.json", {k: GUARD[k] for k in ("enabled", "mode", "before", "after", "warn", "impact")})
+    glog(f"تنظیمات محافظ: {'فعال' if GUARD['enabled'] else 'غیرفعال'} · {GUARD['mode']}")
+    return jsonify(dict(GUARD, log=GLOG[-20:]))
+
+
+def background_loop():
+    n = 0
+    while True:
+        time.sleep(2)
+        n += 1
+        try:
+            if TALERTS:
+                talerts_step()
+            if n % 8 == 0:
+                guard_step()
+        except Exception:
+            pass
+
+
 if __name__ == "__main__":
     if not mt5.initialize():
         raise SystemExit(f"اتصال به MT5 ناموفق بود: {mt5.last_error()} (برنامه MT5 باید باز و لاگین باشد)")
     a = mt5.account_info()
     print("حساب:", a.login, a.server, "DEMO" if a.trade_mode == mt5.ACCOUNT_TRADE_MODE_DEMO else "REAL")
     print("سقف حجم:", MAX_LOT, "| حساب واقعی مجاز:", ALLOW_REAL)
+    threading.Thread(target=background_loop, daemon=True).start()
     from waitress import serve
     serve(app, host="127.0.0.1", port=PORT)

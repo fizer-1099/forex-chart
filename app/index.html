@@ -102,8 +102,9 @@ input[type=file]{display:none}
 
 <div id="sym"></div><div id="tpg"></div><div id="acc"></div><div id="acd"></div><div id="toast"></div>
 <div id="dlg"></div>
-<div id="errb" onclick="this.style.display='none';this.textContent=''" title="tap to dismiss" style="display:none;position:fixed;bottom:0;left:0;right:0;z-index:99;background:#7f1d1d;color:#fff;font:12px monospace;padding:8px;direction:ltr;max-height:30vh;overflow:auto"></div>
-<script>window.addEventListener('error',e=>{const b=document.getElementById('errb');b.style.display='block';b.textContent+=(e.message||'error')+' @'+(e.lineno||'')+'\n'});window.addEventListener('unhandledrejection',e=>{const b=document.getElementById('errb');b.style.display='block';b.textContent+='promise: '+(e.reason&&e.reason.message||e.reason)+'\n'})</script>
+<div id="errb" onclick="this.style.display='none'" style="display:none;position:fixed;bottom:0;left:0;right:0;z-index:99;background:#7f1d1d;color:#fff;font:12px monospace;padding:8px 36px 8px 8px;direction:ltr;max-height:30vh;overflow:auto"></div>
+<script>let _et=null;function showErr(m){const b=document.getElementById('errb');if(!b)return;b.textContent='✕ tap to dismiss · '+m;b.style.display='block';clearTimeout(_et);_et=setTimeout(()=>b.style.display='none',7000)}
+window.addEventListener('error',e=>{showErr((e.message||'error')+' @'+(e.lineno||''))});window.addEventListener('unhandledrejection',e=>{const b=document.getElementById('errb');showErr('promise: '+(e.reason&&e.reason.message||e.reason))})</script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/lightweight-charts/4.1.3/lightweight-charts.standalone.production.js"></script>
 <script>window.LightweightCharts||document.write('<script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"><\/script>')</script>
 <script>if(!window.LightweightCharts){const b=document.getElementById('errb');b.style.display='block';b.textContent='کتابخانه نمودار بارگذاری نشد؛ اینترنت را بررسی کنید.'}</script>
@@ -504,7 +505,7 @@ function geo(it,W,H){
 const drawPrim={
   attached(p){this.ch=p.chart;this.s=p.series;this.rq=p.requestUpdate},detached(){},updateAllViews(){},
   paneViews(){return[{zOrder:()=>'top',renderer:()=>({draw:t=>t.useMediaCoordinateSpace(({context:x,mediaSize:z})=>{
-    const W=z.width,H=z.height;x.font='11px sans-serif';if(SET.sess)sessDraw(x,H);
+    const W=z.width,H=z.height;x.font='11px sans-serif';
     DR.items.concat(DR.pend?[DR.pend]:[]).forEach((it,ix)=>{if(DR.hide)return;
       x.strokeStyle=x.fillStyle=it.c;
       if(ix>=DR.items.length){[[it.t1,it.p1],[it.t2,it.p2]].forEach(([tt,pp])=>{if(tt==null)return;const a=px(tt),b=py(pp);if(a!=null&&b!=null){x.beginPath();x.arc(a,b,4,0,6.3);x.fill()}});return}
@@ -604,7 +605,7 @@ document.addEventListener('pointerdown',e=>{const p=$('sym');if(p.style.display=
 // هشدار
 function drawAlerts(){AL.forEach(l=>{try{candles.removePriceLine(l)}catch(e){}});AL=ALERTS.filter(a=>a.on).map(a=>candles.createPriceLine({price:a.price,color:'#f59e0b',lineWidth:1,lineStyle:3,axisLabelVisible:true,title:'🔔'}))}
 function addAlert(pr){pr=+pr;if(!(pr>0))return;try{window.Notification&&Notification.permission==='default'&&Notification.requestPermission()}catch(e){}const _a={id:Date.now(),price:pr,on:true};ALERTS.push(_a);srvAlert(_a);saveState();drawAlerts();listAlerts()}
-function listAlerts(){const l=$('all');if(!l)return;l.innerHTML='';ALERTS.forEach(a=>{const r=document.createElement('div');r.className='row';r.innerHTML=`<span dir="ltr">🔔 ${a.price.toFixed(DEC)}</span><span class="mut">${a.on?'فعال':'اجراشده'}</span>`;const d=document.createElement('button');d.textContent='حذف';d.onclick=()=>{srvDel(a);ALERTS=ALERTS.filter(z=>z!==a);saveState();drawAlerts();listAlerts()};r.appendChild(d);l.appendChild(r)})}
+function listAlerts(){const l=$('all');if(!l)return;l.innerHTML='';ALERTS.forEach(a=>{const r=document.createElement('div');r.className='row';r.innerHTML=`<span dir="ltr">🔔 ${a.price.toFixed(DEC)}</span><span class="mut">${a.on?'فعال':'اجراشده'}</span>`;const d=document.createElement('button');d.textContent='حذف';d.onclick=()=>{srvDel(a);tgDel(a);ALERTS=ALERTS.filter(z=>z!==a);saveState();drawAlerts();listAlerts()};r.appendChild(d);l.appendChild(r)})}
 function fire(a){a.on=false;saveState();drawAlerts();listAlerts();const m='🔔 '+SYM+' → '+a.price.toFixed(DEC),t=$('toast');t.textContent=m;t.style.display='block';setTimeout(()=>t.style.display='none',7000);try{navigator.vibrate&&navigator.vibrate([200,100,200])}catch(e){}try{if(window.Notification&&Notification.permission==='granted')new Notification(m)}catch(e){}}
 function checkAlerts(p0,p1){if(p0==null||p1==null)return;ALERTS.slice().forEach(a=>{if(a.on&&((p0<=a.price&&p1>=a.price)||(p0>=a.price&&p1<=a.price)))fire(a)})}
 (()=>{const p=$('al');p.innerHTML='<div class="row"><input id="alp" type="number" step="any" placeholder="قیمت" style="width:110px"><button id="ala">+ هشدار</button><button id="alb">آخرین قیمت</button><button id="alc">از نشانگر</button></div><div id="all"></div><div class="mut">هشدار هنگام Replay و هنگام به‌روزرسانی دیتا (نسخه API) بررسی می‌شود. هشدارها و ترسیم‌ها برای هر نماد جدا ذخیره می‌شوند.</div>';
@@ -634,7 +635,7 @@ async function enablePush(){
     localStorage.setItem('push_sub',JSON.stringify(sub));alert('اعلان پس‌زمینه فعال شد')}catch(e){alert('خطا: '+e.message)}
 }
 const post=(u,b)=>fetch(SRV+u,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)}).catch(()=>{});
-function srvAlert(a){const sub=pSub();if(SRV&&(sub||SET.tg_token))post('/api/alerts',{id:a.id,sub,symbol:SYM,price:a.price,ref:D.length?D[D.length-1].close:a.price,tgToken:SET.tg_token||'',tgChatId:SET.tg_chat||''})}
+function srvAlert(a){const sub=pSub();if(SRV&&sub)post('/api/alerts',{id:a.id,sub,symbol:SYM,price:a.price,ref:D.length?D[D.length-1].close:a.price})}
 function srvDel(a){if(SRV)post('/api/alerts/delete',{id:a.id})}
 const BINS={BTCUSD:'BTCUSDT',ETHUSD:'ETHUSDT'},BIV={s30:'1m',m1:'1m',m5:'5m',m15:'15m',m30:'30m',h1:'1h',h4:'4h',d1:'1d'};
 async function binanceRows(sym,tf,days){
@@ -688,7 +689,7 @@ new MutationObserver(oscLayout).observe($('oscs'),{childList:true});
 })();
 const SB=document.createElement('div');SB.id='srcb';SB.style.cssText='position:absolute;top:3px;left:6px;z-index:4;pointer-events:none;font-size:10px;padding:2px 7px;border-radius:6px;color:#fff;direction:rtl;max-width:92%';$('chart').appendChild(SB);
 function badge(){const last=D.length?D[D.length-1]:null,real=SRCL!=='Sample';SB.style.background=real?'#16a34a':'#d97706';
-  SB.textContent=(real?'✓ '+SRCL:'⚠ دیتای نمونه (غیرواقعی)'+(DERR?' — '+DERR:''))+(last?' · آخرین '+last.close.toFixed(DEC)+' @ '+fmtT(last.time)+(tzOff()?'':'Z'):'')+' · v18'}
+  SB.textContent=(real?'✓ '+SRCL:'⚠ دیتای نمونه (غیرواقعی)'+(DERR?' — '+DERR:''))+(last?' · آخرین '+last.close.toFixed(DEC)+' @ '+fmtT(last.time)+(tzOff()?'':'Z'):'')+' · v20'}
 
 // انتخاب خودکار دیتای پایه بر اساس تایم‌فریم
 let CURTF=null;
@@ -758,20 +759,10 @@ function sltLoop(){
       const pr=k==='en'?p.entry:p[k],y=candles.priceToCoordinate(pr),t=SLT.t[k];
       if(SLT.l[k].options().price!==pr)SLT.l[k].applyOptions({price:pr});
       if(y==null){t.style.display='none';return}
-      t.style.display='flex';t.style.alignItems='center';t.style.gap='4px';
-      t.style.top=Math.max(18,Math.min(H-18,y))+'px';
+      t.style.display='block';t.style.top=Math.max(18,Math.min(H-18,y))+'px';
       const pips=(pr-p.entry)*d/PIP;
-      const dragHandle=(k!=='en'||(p===DRAFT&&p.pending))?'<span style="opacity:.7;font-size:14px;cursor:ns-resize">⠿</span> ':'';
-      t.innerHTML=dragHandle+(k==='en'?(p===DRAFT?OTN[p.type]+'  '+pr.toFixed(DEC):'ENTRY '+pr.toFixed(DEC)+plTxt(p)):k.toUpperCase()+'  '+pips.toFixed(1)+'p  '+(pips*PV*p.lots).toFixed(2)+'$'+(k==='tp'&&p.sl!=null?'  R:R '+(Math.abs(pr-p.entry)/Math.abs(p.entry-p.sl)).toFixed(1):''));
+      t.textContent=k==='en'?(p===DRAFT?OTN[p.type]+'  '+pr.toFixed(DEC):'ENTRY '+pr.toFixed(DEC)+plTxt(p)):k.toUpperCase()+'  '+pips.toFixed(1)+'p  '+(pips*PV*p.lots).toFixed(2)+'$'+(k==='tp'&&p.sl!=null?'  R:R '+(Math.abs(pr-p.entry)/Math.abs(p.entry-p.sl)).toFixed(1):'');
     });
-    const vTags=keys.map(k=>({k,y:candles.priceToCoordinate(k==='en'?p.entry:p[k]),t:SLT.t[k]}))
-                    .filter(x=>x.y!=null&&x.t.style.display!=='none')
-                    .sort((a,b)=>a.y-b.y);
-    let lOff=6;
-    for(let i=0;i<vTags.length;i++){
-      if(i>0&&Math.abs(vTags[i].y-vTags[i-1].y)<28){lOff+=135}else{lOff=6}
-      vTags[i].t.style.left=lOff+'px';
-    }
   }
   if(!rp.on&&PEND.length){PEND=[];drawPend()}
   const tr=$('trd');
@@ -890,7 +881,7 @@ function openTF(){
 }
 function openMenu(){
   const dl=$('dlg');
-  const it=[['Replay',()=>qs('rp')],['ژورنال معاملات',()=>qs('jr')],['ریسک و حجم',()=>qs('rk')],['+ سطح افقی',()=>$('lvl').click()],['پاک‌کردن سطوح',()=>$('clr').click()],['بارگذاری CSV',()=>$('csvb').click()],['دیتای زنده و تاریخچه',()=>$('apib')&&$('apib').click()],['اتصال MT5 (VPS)'+(MT5.ok?' ✓':''),openMT5],['قیمت زنده: '+(LIVE?'روشن':'خاموش'),toggleLive],['حساب و معاملات',openAcc],['لیست قیمت‌ها',openWatch],['ساعت بازارها',openMkt],['خط ساعات بازار: '+(SET.sess?'روشن':'خاموش'),toggleSess],['اخبار اقتصادی',openNews],['محافظ اخبار: '+(SET.ng_alert===0?'خاموش':'روشن'),toggleNewsGuard],['تحلیل هوش مصنوعی',openAI],['ربات تلگرام (هشدارها)',openTelegram],['پشتیبان‌گیری و بازیابی',openBackup],['تمام‌صفحه',toggleFS],['تنظیمات چارت',openSettings]];
+  const it=[['Replay',()=>qs('rp')],['ژورنال معاملات',()=>qs('jr')],['ریسک و حجم',()=>qs('rk')],['+ سطح افقی',()=>$('lvl').click()],['پاک‌کردن سطوح',()=>$('clr').click()],['بارگذاری CSV',()=>$('csvb').click()],['دیتای زنده و تاریخچه',()=>$('apib')&&$('apib').click()],['اتصال MT5 (VPS)'+(MT5.ok?' ✓':''),openMT5],[MT5.ok?'قیمت زنده: همیشه فعال (MT5)':'قیمت زنده (Twelve Data): '+(LIVE?'روشن':'خاموش'),toggleLive],['حساب و معاملات',openAcc],['لیست قیمت‌ها',openWatch],['ساعت بازارها',openMkt],['اخبار و تقویم اقتصادی',openNews],['تحلیل هوشمند (AI)',openAI],['محافظ اخبار مهم',openGuard],['ربات تلگرام',openTG],['پشتیبان‌گیری و بازیابی',openBackup],['تمام‌صفحه',toggleFS],['تنظیمات چارت',openSettings]];
   dl.innerHTML='<div class="row" style="justify-content:space-between"><button id="dcl">←</button><b>منو</b></div>'+it.map((x,i)=>`<button class="tl" data-i="${i}">${x[0]}</button>`).join('');
   dl.style.display='block';$('dcl').onclick=()=>dl.style.display='none';
   dl.querySelectorAll('[data-i]').forEach(b=>b.onclick=()=>{dl.style.display='none';it[+b.dataset.i][1]()});
@@ -909,11 +900,8 @@ function openSettings(){
 <label class="row"><span class="mut" style="flex:1">صدای هشدار</span><input type="checkbox" id="s_snd"${c.snd===0?'':' checked'}></label>
 <label class="row"><span class="mut" style="flex:1">منوی دایره‌ای (لمس طولانی روی چارت)</span><input type="checkbox" id="s_ring"${c.ring===0?'':' checked'}></label>
 <label class="row"><span class="mut" style="flex:1">شمارش معکوس کندل (ساعت ایران)</span><input type="checkbox" id="s_cd"${c.cd===0?'':' checked'}></label>
+<label class="row"><span class="mut" style="flex:1">کشیدن مستقیم خطوط SL/TP روی چارت</span><input type="checkbox" id="s_dl"${c.dl===0?'':' checked'}></label>
 <h4>ساعت</h4>
-<h4>محافظ اخبار (News Guard)</h4>
-<label class="row"><span class="mut" style="flex:1">نمایش اخطار خبرهای مهم روی چارت</span><input type="checkbox" id="s_nga"${SET.ng_alert===0?'':' checked'}></label>
-<label class="row"><span class="mut" style="flex:1">بستن خودکار معامله قبل از خبر مهم (MT5)</span><input type="checkbox" id="s_ngc"${SET.ng_close?' checked':''}></label>
-<label class="row"><span class="mut" style="flex:1">چند دقیقه قبل از خبر بسته شود؟</span><input type="number" id="s_ngm" min="1" max="60" style="width:70px" value="${SET.ng_close_min||5}"></label>
 <label class="row"><span class="mut" style="flex:1">منطقه زمانی نمودار</span><select id="s_tz">${[['utc','UTC'],['tehran','تهران (+3:30)'],['local','ساعت گوشی'],['broker','ساعت سرور بروکر']].map(([v,l])=>`<option value="${v}"${(c.tz||'utc')===v?' selected':''}>${l}</option>`).join('')}</select></label>
 <label class="row"><span class="mut" style="flex:1">اختلاف سرور بروکر با UTC (ساعت)</span><input type="number" id="s_tzh" step="0.5" style="width:70px" value="${c.tzh||0}"></label>
 <label class="row"><span class="mut" style="flex:1">پوسته</span><select id="s_theme">${[['auto','خودکار'],['light','روشن'],['dark','تیره']].map(([v,l])=>`<option value="${v}"${(c.theme||'auto')===v?' selected':''}>${l}</option>`).join('')}</select></label>
@@ -922,7 +910,7 @@ function openSettings(){
   const apply=()=>{try{localStorage.setItem('fx_set',JSON.stringify(SET))}catch(e){}
     if(SET.theme==='light'||SET.theme==='dark')document.documentElement.dataset.theme=SET.theme;else document.documentElement.removeAttribute('data-theme');
     theme();applyTZ();applyCT();SB.style.display=SET.badge===0?'none':'block'};
-  $('dok').onclick=()=>{SET.up=$('s_up').value;SET.dn=$('s_dn').value;SET.grid=$('s_grid').checked?1:0;SET.ng_alert=$('s_nga').checked?1:0;SET.ng_close=$('s_ngc').checked?1:0;SET.ng_close_min=+$('s_ngm').value||5;checkNewsGuard();SET.badge=$('s_badge').checked?1:0;SET.theme=$('s_theme').value;SET.ct=$('s_ct').value;SET.log=$('s_log').checked?1:0;SET.tz=$('s_tz').value;SET.tzh=+$('s_tzh').value||0;SET.ba=$('s_ba').checked?1:0;SET.snd=$('s_snd').checked?1:0;SET.ring=$('s_ring').checked?1:0;SET.cd=$('s_cd').checked?1:0;apply();dl.style.display='none'};
+  $('dok').onclick=()=>{SET.up=$('s_up').value;SET.dn=$('s_dn').value;SET.grid=$('s_grid').checked?1:0;SET.badge=$('s_badge').checked?1:0;SET.theme=$('s_theme').value;SET.ct=$('s_ct').value;SET.log=$('s_log').checked?1:0;SET.tz=$('s_tz').value;SET.tzh=+$('s_tzh').value||0;SET.ba=$('s_ba').checked?1:0;SET.snd=$('s_snd').checked?1:0;SET.ring=$('s_ring').checked?1:0;SET.cd=$('s_cd').checked?1:0;SET.dl=$('s_dl').checked?1:0;apply();dl.style.display='none'};
   $('s_rs').onclick=()=>{Object.keys(SET).forEach(k=>delete SET[k]);apply();openSettings()};
 }
 (()=>{
@@ -956,6 +944,7 @@ async function pollPrice(){
   }catch(e){}
 }
 function toggleLive(){
+  if(MT5.ok){flash('با اتصال MT5 قیمت زنده همیشه فعال است؛ این گزینه فقط برای حالت بدون MT5 است');return}
   if(LIVE){clearInterval(LIVE);LIVE=null;flash('قیمت زنده خاموش شد');return}
   if(!LIVEMODE()){flash('اول دیتای واقعی بگیرید (برچسب سبز)');return}
   pollPrice();LIVE=setInterval(pollPrice,12000);flash('قیمت زنده روشن شد (هر ۱۲ ثانیه)');
@@ -1007,7 +996,7 @@ async function liveOrder(side,type){
   if(!pend&&d.side!==side){if(sl!=null)sl=2*d.entry-sl;if(tp!=null)tp=2*d.entry-tp}
   const e=pend?d.entry:(side==='B'?t.ask:t.bid);
   if(!checkOrder(side,e,sl,tp))return;
-  const txt=`${MT5.acc.demo?'DEMO':'⚠ حساب واقعی'}\n${OTN[type]} ${side==='B'?'BUY':'SELL'} ${d.lots} لات ${SYM}\nقیمت ${e.toFixed(DEC)}  SL ${sl.toFixed(DEC)}  TP ${tp!=null?tp.toFixed(DEC):'-'}\nارسال شود؟`;
+  const txt=`${MT5.acc.demo?'DEMO':'⚠ حساب واقعی'}\n${OTN[type]} ${side==='B'?'BUY':'SELL'} ${d.lots} لات ${SYM}\nقیمت ${e.toFixed(DEC)}  SL ${sl.toFixed(DEC)}  TP ${tp!=null?tp.toFixed(DEC):'-'}${newsWarn(SYM)}\nارسال شود؟`;
   if(!confirm(txt))return;
   try{const r=await mt('/api/order',{symbol:MT5S(SYM),side,type,lots:d.lots,price:pend?d.entry:0,sl,tp});flash('✓ '+(r.comment||'انجام شد')+' #'+r.ticket);DRAFT=null;MTSIG='';syncLpos();buildTrade();closeTP()}
   catch(er){msg(hintErr(er.message));alert('سفارش انجام نشد:\n'+hintErr(er.message))}
@@ -1141,10 +1130,9 @@ function fire(a){
   saveState();drawAlerts();listAlerts();t.textContent=m;t.style.display='block';setTimeout(()=>t.style.display='none',7000);
   try{navigator.vibrate&&navigator.vibrate([200,100,200])}catch(e){}beep();
   try{if(window.Notification&&Notification.permission==='granted')new Notification(m)}catch(e){}
-  if(SET.tg_on&&SRV)post('/api/telegram/send',{text:`🔔 <b>هشدار قیمت فارکس چارت</b>\nنماد: <b>${SYM}</b>\nقیمت به <b>${a.price.toFixed(DEC)}</b> رسید!`,token:SET.tg_token||'',chatId:SET.tg_chat||''});
 }
-function addAlert(pr){pr=+pr;if(!(pr>0))return;try{window.Notification&&Notification.permission==='default'&&Notification.requestPermission()}catch(e){}const a={id:Date.now(),price:pr,on:true,rep:!!($('al_rep')&&$('al_rep').checked)};ALERTS.push(a);srvAlert(a);saveState();drawAlerts();listAlerts()}
-function listAlerts(){const l=$('all');if(!l)return;l.innerHTML='';ALERTS.forEach(a=>{const r=document.createElement('div');r.className='row';r.innerHTML=`<span dir="ltr">🔔 ${a.price.toFixed(DEC)}${a.rep?' 🔁':''}</span><span class="mut">${a.on?'فعال':'اجراشده'}</span>`;const d=document.createElement('button');d.textContent='حذف';d.onclick=()=>{srvDel(a);ALERTS=ALERTS.filter(z=>z!==a);saveState();drawAlerts();listAlerts()};r.appendChild(d);l.appendChild(r)})}
+function addAlert(pr){pr=+pr;if(!(pr>0))return;try{window.Notification&&Notification.permission==='default'&&Notification.requestPermission()}catch(e){}const a={id:Date.now(),price:pr,on:true,rep:!!($('al_rep')&&$('al_rep').checked)};ALERTS.push(a);srvAlert(a);tgAlert(a);saveState();drawAlerts();listAlerts()}
+function listAlerts(){const l=$('all');if(!l)return;l.innerHTML='';ALERTS.forEach(a=>{const r=document.createElement('div');r.className='row';r.innerHTML=`<span dir="ltr">🔔 ${a.price.toFixed(DEC)}${a.rep?' 🔁':''}</span><span class="mut">${a.on?'فعال':'اجراشده'}</span>`;const d=document.createElement('button');d.textContent='حذف';d.onclick=()=>{srvDel(a);tgDel(a);ALERTS=ALERTS.filter(z=>z!==a);saveState();drawAlerts();listAlerts()};r.appendChild(d);l.appendChild(r)})}
 (()=>{
   const al=$('al'),r=document.createElement('label');r.className='row';r.innerHTML='<input type="checkbox" id="al_rep"><span class="mut">تکرارشونده (هر ۶۰ ثانیه دوباره فعال شود)</span>';al.insertBefore(r,$('all'));
   const dr=$('dr'),row=document.createElement('div');row.className='row';
@@ -1188,7 +1176,7 @@ let RING_T=0,ringOpen=false,ringT0=0;
   window.addEventListener('pointerup',e=>{if(!ringOpen||Date.now()-ringT0<350)return;const h=hit(e);if(h)h.click()},true);
   const c=$('chart');let tm=null,sx=0,sy=0;
   const cancel=()=>{clearTimeout(tm);tm=null};
-  c.addEventListener('pointerdown',e=>{cancel();if(SET.ring===0||!e.isPrimary||!/^(CANVAS|TD|TABLE|TR)$/.test(e.target.tagName))return;sx=e.clientX;sy=e.clientY;tm=setTimeout(()=>{tm=null;showRing(sx,sy)},450)},true);
+  c.addEventListener('pointerdown',e=>{cancel();if(SET.ring===0||!e.isPrimary||!/^(CANVAS|TD|TABLE|TR)$/.test(e.target.tagName))return;sx=e.clientX;sy=e.clientY;tm=setTimeout(()=>{tm=null;if(!window.__drag)showRing(sx,sy)},450)},true);
   c.addEventListener('pointermove',e=>{if(tm&&Math.hypot(e.clientX-sx,e.clientY-sy)>10)cancel()},true);
   ['pointerup','pointercancel'].forEach(t=>c.addEventListener(t,cancel,true));
 })();
@@ -1314,7 +1302,7 @@ function updAcc(force){
   $('acs').innerHTML=r('بالانس:',fm(a.balance))+r('موجودی:',fm(a.equity))+r('مارجین:',fm(a.margin))+r('مارجین آزاد:',fm(a.free))+r('سطح مارجین (%):',a.level?fm(a.level):'—');
   document.querySelectorAll('#acc [data-a]').forEach(b=>b.className=b.dataset.a===ACT?'on':'');
   const L=$('acl');
-  if(ACT==='pos')L.innerHTML=MT5.pos.length?MT5.pos.map(p=>`<div class="ap" data-t="${p.ticket}"><div><b dir="ltr">${p.symbol}</b>, ${sideTxt(p)}<div class="mut" dir="ltr">${p.price} → ${p.current}</div></div><b class="${p.profit>=0?'p':'n'}" dir="ltr">${fm(p.profit)}</b></div>`).join(''):'<p class="mut" style="text-align:center;padding:30px">پوزیشن بازی وجود ندارد</p>';
+  if(ACT==='pos')L.innerHTML=MT5.pos.length?posSummary()+MT5.pos.map(posCard).join(''):'<p class="mut" style="text-align:center;padding:30px">پوزیشن بازی وجود ندارد</p>';
   else if(ACT==='ord')L.innerHTML=MT5.orders.length?MT5.orders.map(o=>`<div class="ap" data-t="${o.ticket}"><div><b dir="ltr">${o.symbol}</b>, <span dir="ltr">${OTN[o.type]} ${(+o.lots).toFixed(2)}</span><div class="mut" dir="ltr">@ ${o.price} · SL ${o.sl||'—'} · TP ${o.tp||'—'}</div></div></div>`).join(''):'<p class="mut" style="text-align:center;padding:30px">سفارش در انتظاری وجود ندارد</p>';
   else if(force)loadHis();
 }
@@ -1417,177 +1405,10 @@ function sessInfo(tz,oh,ch,now){
 const fxOpen=ms=>{const o=tzParts('America/New_York',ms),h=+o.hour;return!(o.weekday==='Sat'||(o.weekday==='Fri'&&h>=17)||(o.weekday==='Sun'&&h<17))};
 function fxNext(now){const st=fxOpen(now);let t=now;for(let i=0;i<8*96;i++){t+=900000;if(fxOpen(t)!==st){let a=t-900000;while(t-a>60000){const mid=Math.floor((a+t)/2);if(fxOpen(mid)===st)a=mid;else t=mid}return{open:st,at:t}}}return{open:st,at:null}}
 let MKI=null,FXN=null;
-
-// ===== خط عمودی ساعات باز/بسته بازارها =====
-const SESS_C={'سیدنی':'#a78bfa','توکیو':'#f472b6','فرانکفورت':'#60a5fa','لندن':'#fbbf24','نیویورک':'#34d399'};
-let SESS_CACHE={k:'',ev:[]};
-function sessEvents(){
-  const ch=drawPrim.ch;if(!ch)return[];
-  const vr=ch.timeScale().getVisibleRange();if(!vr)return[];
-  const k=vr.from+'|'+vr.to;if(SESS_CACHE.k===k)return SESS_CACHE.ev;
-  const ev=[],seen=new Set(),from=+vr.from*1000-86400000,to=+vr.to*1000+86400000;
-  if(to-from>21*86400000){SESS_CACHE={k,ev};return ev}
-  for(const [n,tz,oh,chh] of MKT){
-    for(let t=from;t<=to;t+=1800000){const s=sessInfo(tz,oh,chh,t).cur;if(!s)continue;
-      for(const [tt,kind] of [[s.o,'open'],[s.c,'close']]){const key=n+kind+tt;if(seen.has(key))continue;seen.add(key);ev.push({t:tt/1000,n,kind,c:SESS_C[n]||'#888'})}}
-  }
-  SESS_CACHE={k,ev};return ev;
-}
-// x-coordinate for any time (sec), also for times after the last candle (extrapolated)
-function tsX(t){
-  if(!D.length||!chart)return null;
-  const ts=chart.timeScale(),sp=typeof tf==='number'?tf:baseSec;let lg;
-  if(t<D[0].time){const d=D.length>1?D[1].time-D[0].time:sp;lg=(t-D[0].time)/(d||sp)}
-  else{const i=idxT(t);
-    if(i<D.length-1){const d=D[i+1].time-D[i].time;lg=i+(d>0?(t-D[i].time)/d:0)}
-    else{const d=D.length>1?D[D.length-1].time-D[D.length-2].time:sp;lg=(D.length-1)+(t-D[D.length-1].time)/(d||sp)}}
-  const a=ts.logicalToCoordinate(lg);return a==null?null:a;
-}
-function sessDraw(x,H){
-  sessEvents().forEach(e=>{const a=tsX(e.t);if(a==null)return;
-    x.save();x.strokeStyle=e.c;x.globalAlpha=.55;x.lineWidth=1;x.setLineDash(e.kind==='open'?[]:[4,4]);
-    x.beginPath();x.moveTo(a,0);x.lineTo(a,H);x.stroke();x.restore();
-    x.save();x.fillStyle=e.c;x.font='10px sans-serif';x.fillText(e.n+(e.kind==='open'?' ▲':' ▼'),a+3,24);x.restore();
-  });
-}
-function toggleSess(){SET.sess=!SET.sess;try{localStorage.setItem('fx_set',JSON.stringify(SET))}catch(e){}
-  flash('خط ساعات بازار '+(SET.sess?'روشن':'خاموش'));drawPrim.rq&&drawPrim.rq()}
-// ===== helpers for news/AI panels =====
-const escH=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-const irDT=ms=>new Date(ms).toLocaleString('fa-IR',{timeZone:'Asia/Tehran',month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'});
-// ===== اخبار اقتصادی =====
-async function openNews(){
-  const dl=$('dlg');
-  dl.innerHTML='<div class="row" style="justify-content:space-between"><button id="dcl">←</button><b>اخبار اقتصادی (ساعت ایران)</b></div><div class="row" style="padding:8px"><button id="nfh">فقط مهم (High)</button><button id="nfm">متوسط به بالا</button><button id="nfa">همه</button></div><div id="nl" class="mut" style="padding:8px">در حال گرفتن اخبار...</div>';
-  dl.style.display='block';$('dcl').onclick=()=>dl.style.display='none';
-  let all=[],lvl=3;const rank={High:3,Medium:2,Low:1};
-  const draw=()=>{
-    const list=all.filter(e=>(rank[e.impact]||0)>=lvl).sort((a,b)=>Date.parse(a.date)-Date.parse(b.date));
-    $('nl').innerHTML=list.length?list.map(e=>`<div class="ar"><span><b>${escH(e.country)} · ${escH(e.title)}</b><div class="mut" dir="ltr" style="font-size:11px">${escH(e.impact)} · پیش‌بینی ${escH(e.forecast||'—')} · قبلی ${escH(e.previous||'—')}</div></span><span style="text-align:left"><b dir="ltr">${irDT(Date.parse(e.date))}</b></span></div>`).join(''):'<div class="mut">خبری با این سطح پیدا نشد</div>';
-  };
-  $('nfh').onclick=()=>{lvl=3;draw()};$('nfm').onclick=()=>{lvl=2;draw()};$('nfa').onclick=()=>{lvl=1;draw()};
-  try{
-    if(!SRV)throw new Error('آدرس سرور در config.js تنظیم نشده');
-    const r=await fetch(SRV+'/api/news');const j=await r.json();if(!r.ok)throw new Error(j.error||'HTTP '+r.status);
-    all=Array.isArray(j)?j:[];draw();
-  }catch(e){$('nl').textContent='خطا: '+e.message}
-}
-// ===== تحلیل هوش مصنوعی =====
-function openAI(){
-  const dl=$('dlg');
-  dl.innerHTML='<div class="row" style="justify-content:space-between"><button id="dcl">←</button><b>تحلیل هوش مصنوعی</b></div><div class="row" style="padding:8px"><button id="aig">تحلیل '+escH(SYM)+' بده</button></div><div id="ao" class="mut" style="padding:8px;white-space:pre-wrap;font-size:13px;line-height:1.9">تحلیل تکنیکال، اقتصادی (روزانه و هفتگی) و اخبار روز و هفته را می‌گیری.</div>';
-  dl.style.display='block';$('dcl').onclick=()=>dl.style.display='none';
-  $('aig').onclick=async()=>{
-    const b=$('aig');b.disabled=true;$('ao').textContent='در حال تحلیل... (چند ثانیه طول می‌کشد)';
-    try{
-      if(!SRV)throw new Error('آدرس سرور در config.js تنظیم نشده');
-      if(!base||!base.length)throw new Error('دیتایی برای تحلیل نیست');
-      const r=await fetch(SRV+'/api/analyze',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({symbol:SYM,candles:base.slice(-150).map(c=>[c.time,c.open,c.high,c.low,c.close])})});
-      const j=await r.json();if(!r.ok)throw new Error(j.error||'HTTP '+r.status);
-      $('ao').textContent=j.text||'پاسخ خالی بود';
-    }catch(e){$('ao').textContent='خطا: '+e.message}
-    b.disabled=false;
-  };
-}
-
-// ===== محافظ اخبار (News Guard) و ربات تلگرام =====
-function symCurrencies(s){
-  if(!s)return['USD'];s=s.toUpperCase();
-  if(/^[A-Z]{6}$/.test(s))return [s.slice(0,3),s.slice(3,6)];
-  if(s.includes('EUR'))return['EUR','USD'];if(s.includes('GBP'))return['GBP','USD'];if(s.includes('JPY'))return['JPY','USD'];
-  if(s.includes('AUD'))return['AUD','USD'];if(s.includes('CAD'))return['CAD','USD'];if(s.includes('CHF'))return['CHF','USD'];
-  if(s.includes('NZD'))return['NZD','USD'];return['USD'];
-}
-
-let NGB=null,LAST_NEWS=[];
-function initNewsGuardBanner(){
-  if(NGB)return;
-  NGB=document.createElement('div');NGB.id='ngb';
-  NGB.style.cssText='display:none;position:absolute;top:32px;left:6px;z-index:8;padding:6px 12px;border-radius:8px;background:linear-gradient(135deg,#dc2626,#991b1b);color:#fff;font-size:11px;font-weight:700;box-shadow:0 3px 8px #0008;cursor:pointer;direction:rtl;align-items:center;gap:6px';
-  NGB.onclick=openNews;
-  $('chart').appendChild(NGB);
-}
-
-async function checkNewsGuard(){
-  initNewsGuardBanner();
-  if(!NGB||SET.ng_alert===0||!SRV)return;
-  try{
-    if(!LAST_NEWS.length){const r=await fetch(SRV+'/api/news');if(r.ok)LAST_NEWS=await r.json()}
-    if(!Array.isArray(LAST_NEWS)||!LAST_NEWS.length){NGB.style.display='none';return}
-    const curs=symCurrencies(SYM),now=Date.now();
-    const up=LAST_NEWS.filter(e=>curs.includes(e.country)&&e.impact==='High')
-      .map(e=>({...e,diffMin:Math.round((Date.parse(e.date)-now)/60000)}))
-      .filter(e=>e.diffMin>=-3&&e.diffMin<=60)
-      .sort((a,b)=>a.diffMin-b.diffMin);
-    if(up.length&&up[0].diffMin>=-3){
-      const ev=up[0];
-      NGB.style.display='flex';
-      NGB.innerHTML=`⚠️ خبر مهم <b>${escH(ev.country)} · ${escH(ev.title)}</b> (${ev.diffMin<=0?'هم‌اکنون!':ev.diffMin+' دقیقه دیگر'})`;
-      if(SET.ng_close&&MT5.ok&&!rp.on&&ev.diffMin<=(SET.ng_close_min||5)&&ev.diffMin>=0){
-        const pos=MT5.pos.filter(p=>p.symbol===MT5S(SYM));
-        for(const p of pos){
-          if(!p._ng_closed){
-            p._ng_closed=true;
-            try{await mt('/api/close',{ticket:p.ticket,volume:p.lots});flash(`🚨 محافظ اخبار: معامله ${SYM} قبل از خبر بسته شد!`);beep()}catch(err){}
-          }
-        }
-      }
-    }else{
-      NGB.style.display='none';
-    }
-  }catch(e){}
-}
-setInterval(checkNewsGuard,30000);
-
-function toggleNewsGuard(){
-  SET.ng_alert=SET.ng_alert===0?1:0;
-  try{localStorage.setItem('fx_set',JSON.stringify(SET))}catch(e){}
-  if(SET.ng_alert===0){if(NGB)NGB.style.display='none';flash('محافظ اخبار خاموش شد')}
-  else{flash('محافظ اخبار روشن شد');checkNewsGuard()}
-}
-
-function openTelegram(){
-  const dl=$('dlg');
-  dl.innerHTML=`<div class="row" style="justify-content:space-between"><button id="dcl">←</button><b>ربات تلگرام (هشدارهای قیمت)</b></div>
-<p class="mut" style="font-size:12px;line-height:1.8">هشدارهای قیمتی را علاوه بر اعلان گوشی، مستقیم به تلگرام بفرستید تا هیچ هشداری را از دست ندهید.</p>
-<label class="row"><span class="mut" style="flex:1">ارسال هشدار به تلگرام</span><input type="checkbox" id="tg_on"${SET.tg_on?' checked':''}></label>
-<div style="margin-top:8px"><div class="mut" style="font-size:11px">توکن ربات تلگرام (از @BotFather):</div>
-<input id="tg_tok" type="text" dir="ltr" placeholder="123456789:ABCdefGhI..." style="width:100%;margin:4px 0" value="${escH(SET.tg_token||'')}"></div>
-<div style="margin-top:8px"><div class="mut" style="font-size:11px">شناسه کاربری (Chat ID شما از @userinfobot):</div>
-<input id="tg_cid" type="text" dir="ltr" placeholder="123456789" style="width:100%;margin:4px 0" value="${escH(SET.tg_chat||'')}"></div>
-<div class="row" style="margin-top:12px;gap:8px">
-  <button id="tg_sv" class="on">ذخیره تنظیمات</button>
-  <button id="tg_tst">تست ارسال پیام به تلگرام</button>
-</div>
-<div id="tg_msg" class="mut" style="margin-top:8px;font-size:11px"></div>`;
-  dl.style.display='block';$('dcl').onclick=()=>dl.style.display='none';
-  $('tg_sv').onclick=()=>{
-    SET.tg_on=$('tg_on').checked;
-    SET.tg_token=$('tg_tok').value.trim();
-    SET.tg_chat=$('tg_cid').value.trim();
-    try{localStorage.setItem('fx_set',JSON.stringify(SET))}catch(e){}
-    flash('تنظیمات تلگرام ذخیره شد');
-  };
-  $('tg_tst').onclick=async()=>{
-    const m=$('tg_msg');m.textContent='در حال ارسال پیام تست...';
-    try{
-      if(!SRV)throw new Error('آدرس سرور در config.js تنظیم نشده');
-      const tok=$('tg_tok').value.trim(),cid=$('tg_cid').value.trim();
-      const r=await fetch(SRV+'/api/telegram/test',{
-        method:'POST',
-        headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({token:tok,chatId:cid})
-      });
-      const j=await r.json();
-      if(!r.ok)throw new Error(j.error||'HTTP '+r.status);
-      m.style.color='#16a34a';m.textContent='✓ پیام با موفقیت به تلگرام فرستاده شد! تلگرامت رو چک کن.';
-    }catch(e){m.style.color='#dc2626';m.textContent='خطا: '+e.message}
-  };
-}
-
 function openMkt(){
-  const dl=$('dlg');dl.innerHTML='<div class="row" style="justify-content:space-between"><button id="dcl">←</button><b>ساعت بازارها (به وقت ایران)</b></div><div id="mk"></div><p class="mut" style="font-size:11px">ساعت‌ها بر اساس ساعت محلی هر بازار (۸ تا ۱۷ برای لندن، فرانکفورت و نیویورک؛ ۷ تا ۱۶ سیدنی؛ ۹ تا ۱۸ توکیو) و با در نظر گرفتن ساعت تابستانی محاسبه می‌شوند و تقریبی‌اند. ساعت ایران ثابت +۳:۳۰ است.</p>';dl.style.display='block';
+  const dl=$('dlg');dl.innerHTML='<div class="row" style="justify-content:space-between"><button id="dcl">←</button><b>ساعت بازارها (به وقت ایران)</b></div><div class="row"><button id="mk_s">خطوط جلسات امروز روی چارت</button><button id="mk_n">خطوط اخبار مهم روی چارت</button></div><div id="mk"></div><p class="mut" style="font-size:11px">ساعت‌ها بر اساس ساعت محلی هر بازار (۸ تا ۱۷ برای لندن، فرانکفورت و نیویورک؛ ۷ تا ۱۶ سیدنی؛ ۹ تا ۱۸ توکیو) و با در نظر گرفتن ساعت تابستانی محاسبه می‌شوند و تقریبی‌اند. ساعت ایران ثابت +۳:۳۰ است.</p>';dl.style.display='block';
   $('dcl').onclick=()=>{clearInterval(MKI);dl.style.display='none'};
+  const upd=()=>{$('mk_s').className=SET.sess?'on':'';$('mk_n').className=SET.news?'on':''};$('mk_s').onclick=()=>{setOv('sess',!SET.sess);upd()};$('mk_n').onclick=()=>{setOv('news',!SET.news);upd()};upd();
   const draw=()=>{
     const now=Date.now(),open=[];let h='';
     const row=(n,st,hrs,cd,hl)=>`<div class="ar" style="${hl?'background:var(--grid);border-radius:8px;padding:8px':''}"><span><b>${n}</b><div class="mut" dir="ltr" style="font-size:11px">${hrs}</div></span><span style="text-align:left"><b class="${st?'p':'n'}">${st?'باز':'بسته'}</b><div class="mut" dir="ltr" style="font-size:11px">${cd}</div></span></div>`;
@@ -1601,6 +1422,212 @@ function openMkt(){
     $('mk').innerHTML=h;
   };
   draw();MKI=setInterval(draw,1000);
+}
+
+// ===== اخبار و تقویم اقتصادی، تحلیل هوشمند، خطوط جلسات و اخبار روی چارت =====
+let EVT=[],EVT_T=0;
+const symCcy=s=>{const m=(s||'').match(/^([A-Z]{3})([A-Z]{3})/);return m?[m[1],m[2]]:['USD']};
+const impN=i=>i==='High'?3:i==='Medium'?2:1;
+async function mtPost(path,body,ms){const c=new AbortController(),t=setTimeout(()=>c.abort(),ms);try{const r=await fetch(MT5.url.replace(/\/$/,'')+path,{method:'POST',headers:{'X-Token':MT5.tok,'Content-Type':'application/json'},body:JSON.stringify(body),signal:c.signal});const j=await r.json();if(!r.ok)throw new Error(j.error||'HTTP '+r.status);return j}catch(e){throw new Error(e.name==='AbortError'?'زمان پاسخ تمام شد':e.message)}finally{clearTimeout(t)}}
+const saveSET=()=>{try{localStorage.setItem('fx_set',JSON.stringify(SET))}catch(e){}};
+function setOv(k,v){SET[k]=v?1:0;saveSET();evPrim.rq&&evPrim.rq();if(v&&k==='news')loadEvt().catch(e=>flash(e.message))}
+async function loadEvt(force){
+  if(!force&&EVT.length&&Date.now()-EVT_T<1800000)return EVT;
+  let a;
+  if(MT5.ok)a=await mtTO('/api/calendar',20000);
+  else{try{const j=await(await fetch(SRV?SRV+'/api/news':'https://nfs.faireconomy.media/ff_calendar_thisweek.json')).json();a=j.map(e=>({title:e.title,country:e.country,ts:Math.floor(Date.parse(e.date)/1000),impact:e.impact,forecast:e.forecast,previous:e.previous}))}catch(e){throw new Error('برای دریافت تقویم به اتصال MT5 (پل VPS) نیاز است')}}
+  EVT=a;EVT_T=Date.now();evPrim.rq&&evPrim.rq();return a;
+}
+const irDate=ts=>{const d=new Date((ts+12600)*1000);return d.getUTCFullYear()+'-'+p2(d.getUTCMonth()+1)+'-'+p2(d.getUTCDate())};
+const irTime=ts=>{const d=new Date((ts+12600)*1000);return p2(d.getUTCHours())+':'+p2(d.getUTCMinutes())};
+let NTAB='cal',NIMP=2,NMY=false;
+function openNews(){
+  const dl=$('dlg');
+  dl.innerHTML=`<div class="row" style="justify-content:space-between"><button id="dcl">←</button><b>اخبار و تقویم اقتصادی</b><button id="nrf">⟳</button></div>
+<div class="row"><button data-nt="cal">تقویم</button><button data-nt="hl">سرفصل خبرها</button></div>
+<div class="row" id="nflt"><button data-ni="3">مهم</button><button data-ni="2">متوسط و مهم</button><button data-ni="1">همه</button><label class="mut"><input type="checkbox" id="nmy"> فقط ارزهای ${SYM}</label></div>
+<div class="row"><button id="nln">خطوط اخبار مهم روی چارت</button></div><div id="nst" class="mut" style="font-size:12px;padding:4px">ساعت‌ها به وقت ایران</div><div id="nl"></div>`;
+  dl.style.display='block';$('dcl').onclick=()=>dl.style.display='none';
+  const upd=()=>{dl.querySelectorAll('[data-nt]').forEach(b=>b.className=b.dataset.nt===NTAB?'on':'');dl.querySelectorAll('[data-ni]').forEach(b=>b.className=+b.dataset.ni===NIMP?'on':'');$('nln').className=SET.news?'on':'';$('nmy').checked=NMY;$('nflt').style.display=NTAB==='cal'?'flex':'none'};
+  dl.querySelectorAll('[data-nt]').forEach(b=>b.onclick=()=>{NTAB=b.dataset.nt;upd();load()});
+  dl.querySelectorAll('[data-ni]').forEach(b=>b.onclick=()=>{NIMP=+b.dataset.ni;upd();render()});
+  $('nmy').onchange=()=>{NMY=$('nmy').checked;render()};$('nln').onclick=()=>{setOv('news',!SET.news);upd()};$('nrf').onclick=()=>load(true);
+  let HL=[];
+  const render=()=>{
+    const L=$('nl');
+    if(NTAB==='hl'){L.innerHTML=HL.length?HL.map(h=>`<div class="ap" style="display:block"><a href="${h.link}" target="_blank" rel="noopener" style="color:var(--fg);text-decoration:none">${h.title}</a><div class="mut" style="font-size:11px" dir="ltr">${h.src} · ${h.ts?irDate(h.ts)+' '+irTime(h.ts):''}</div></div>`).join(''):'<p class="mut">خبری دریافت نشد</p>';return}
+    const now=Date.now()/1000,my=symCcy(SYM);
+    const ev=EVT.filter(e=>impN(e.impact)>=NIMP&&(!NMY||my.includes(e.country))).sort((a,b)=>a.ts-b.ts);
+    if(!ev.length){L.innerHTML='<p class="mut" style="padding:16px">رویدادی برای نمایش نیست.</p>';return}
+    const today=irDate(now),tomorrow=irDate(now+86400);let h='',cur='';
+    ev.forEach(e=>{const d=irDate(e.ts);if(d!==cur){cur=d;h+=`<h4>${d===today?'امروز':d===tomorrow?'فردا':''} ${d}</h4>`}
+      const past=e.ts<now,col=impN(e.impact)===3?'#dc2626':impN(e.impact)===2?'#f59e0b':'#94a3b8',rem=e.ts-now;
+      h+=`<div class="ap" style="opacity:${past?.5:1};${my.includes(e.country)?'background:var(--grid);border-radius:8px;padding-left:8px;padding-right:8px':''}"><div><span style="color:${col}">●</span> <b dir="ltr">${irTime(e.ts)}</b> <b>${e.country}</b> <span>${e.title}</span><div class="mut" dir="ltr" style="font-size:11px">${e.forecast?'پیش‌بینی '+e.forecast:''} ${e.previous?'· قبلی '+e.previous:''}</div></div><span class="mut" dir="ltr" style="font-size:11px">${!past&&rem<86400?'تا '+fmtRem(rem):''}</span></div>`});
+    L.innerHTML=h;
+  };
+  const load=async f=>{
+    $('nl').innerHTML='<p class="mut">در حال دریافت...</p>';
+    try{
+      if(NTAB==='cal'){await loadEvt(f);$('nst').textContent='ساعت‌ها به وقت ایران · '+EVT.length+' رویداد این هفته'}
+      else{if(!MT5.ok)throw new Error('برای سرفصل خبرها به اتصال MT5 (پل VPS) نیاز است');HL=await mtTO('/api/headlines',20000);$('nst').textContent='ساعت‌ها به وقت ایران'}
+      render();
+    }catch(e){$('nl').innerHTML='<p style="color:#dc2626">'+e.message+(/404/.test(e.message)?' (فایل mt5_bridge.py روی VPS را به‌روز کنید)':'')+'</p>'}
+  };
+  upd();load();
+}
+// ---- تحلیل هوشمند ----
+function md2html(t){return t.replace(/&/g,'&amp;').replace(/</g,'&lt;').split('\n').map(l=>{let m;
+  if(m=l.match(/^#{1,2}\s+(.*)/))return'<h3>'+m[1]+'</h3>';if(m=l.match(/^#{3,}\s+(.*)/))return'<h4>'+m[1]+'</h4>';
+  if(/^\s*[-*•]\s+/.test(l))return'<div style="padding-right:14px">• '+l.replace(/^\s*[-*•]\s+/,'')+'</div>';
+  return l.trim()?'<div>'+l+'</div>':'<div style="height:6px"></div>'}).join('').replace(/\*\*(.+?)\*\*/g,'<b>$1</b>')}
+let AISC='both',AISY=null;
+function openAI(){
+  const dl=$('dlg');let last=null;try{last=JSON.parse(localStorage.getItem('fx_ai'))}catch(e){}
+  const cand=[SYM].concat(MYL.filter(s=>s!==SYM)).slice(0,8);if(!AISY)AISY=[SYM];
+  dl.innerHTML=`<div class="row" style="justify-content:space-between"><button id="dcl">←</button><b>تحلیل هوشمند بازار</b></div>
+<div class="row"><button data-sc="daily">روزانه</button><button data-sc="weekly">هفتگی</button><button data-sc="both">جامع</button></div>
+<div class="mut" style="font-size:12px">نمادها:</div><div class="row" id="aisy"></div>
+<button id="aigo" style="width:100%;padding:12px;margin:6px 0">تحلیل کن</button><div id="aist" class="mut" style="font-size:12px"></div>
+<div id="aiout" style="font-size:14px;line-height:1.7"></div><div class="row"><button id="aicp">کپی متن</button></div>
+<p class="mut" style="font-size:11px">این تحلیل توسط هوش مصنوعی از داده‌های تکنیکال MT5، تقویم اقتصادی و سرفصل خبرها ساخته می‌شود؛ پیشنهاد مالی یا سیگنال قطعی نیست و ممکن است اشتباه باشد.</p>`;
+  dl.style.display='block';$('dcl').onclick=()=>dl.style.display='none';
+  const upd=()=>{dl.querySelectorAll('[data-sc]').forEach(b=>b.className=b.dataset.sc===AISC?'on':'');$('aisy').innerHTML='';cand.forEach(s=>{const b=document.createElement('button');b.textContent=s;b.className=AISY.includes(s)?'on':'';b.onclick=()=>{AISY=AISY.includes(s)?AISY.filter(x=>x!==s):AISY.concat(s);upd()};$('aisy').appendChild(b)})};
+  dl.querySelectorAll('[data-sc]').forEach(b=>b.onclick=()=>{AISC=b.dataset.sc;upd()});upd();
+  const show=(t,when)=>{$('aiout').innerHTML=md2html(t);$('aist').textContent=when||''};
+  if(last)show(last.text,'آخرین تحلیل: '+irDate(last.t/1000)+' '+irTime(last.t/1000)+' (وقت ایران)');
+  $('aicp').onclick=async()=>{try{await navigator.clipboard.writeText($('aiout').innerText);flash('کپی شد')}catch(e){flash('کپی نشد')}};
+  $('aigo').onclick=async()=>{
+    if(!MT5.ok&&!SRV){$('aist').textContent='برای تحلیل به اتصال MT5 (پل VPS) یا سرور Render نیاز است.';return}
+    if(MT5.ok&&MT5.acc&&MT5.acc.ai===false){$('aist').textContent='کلید هوش مصنوعی (ANTHROPIC_API_KEY) روی VPS تنظیم نشده است؛ فایل run.bat را ببینید.';return}
+    if(!AISY.length){$('aist').textContent='حداقل یک نماد انتخاب کنید.';return}
+    const t0=Date.now(),tm=setInterval(()=>$('aist').textContent='در حال تحلیل... '+Math.floor((Date.now()-t0)/1000)+' ثانیه (ممکن است تا ۲ دقیقه طول بکشد)',500);$('aigo').disabled=true;
+    try{const j=MT5.ok?await mtPost('/api/analyze',{symbols:AISY.map(MT5S),scope:AISC},180000):await srvPost('/api/analyze',{symbol:SYM,candles:D.slice(-150).map(b=>[b.time,b.open,b.high,b.low,b.close])},180000);show(j.text,'');try{localStorage.setItem('fx_ai',JSON.stringify({t:Date.now(),text:j.text}))}catch(e){}$('aist').textContent='انجام شد'}
+    catch(e){$('aist').textContent='خطا: '+e.message}
+    finally{clearInterval(tm);$('aigo').disabled=false}
+  };
+}
+// ---- خطوط جلسات و اخبار روی چارت ----
+const SBC={};
+function sessLines(a,b){
+  const key=Math.floor(a/86400)+'|'+Math.floor(b/86400);if(SBC[key])return SBC[key];
+  const out=[],d0=new Date(a*1000-86400000),y=d0.getUTCFullYear(),m=d0.getUTCMonth(),dd=d0.getUTCDate(),n=Math.ceil((b-a)/86400)+3;
+  [['SYD','Australia/Sydney',7,16,'#a855f7'],['TKY','Asia/Tokyo',9,18,'#f59e0b'],['LON','Europe/London',8,17,'#2563eb'],['NYC','America/New_York',8,17,'#16a34a']].forEach(([nm,tz,oh,ch,col])=>{
+    for(let k=0;k<=n;k++){const dt=new Date(Date.UTC(y,m,dd+k)),wd=dt.getUTCDay();if(wd===0||wd===6)continue;const Y=dt.getUTCFullYear(),M=dt.getUTCMonth(),Dd=dt.getUTCDate();
+      out.push([localToUtc(tz,Y,M,Dd,oh)/1000,col,nm+'▶']);out.push([localToUtc(tz,Y,M,Dd,ch)/1000,col,nm+'■'])}});
+  const ks=Object.keys(SBC);if(ks.length>20)ks.slice(0,10).forEach(k=>delete SBC[k]);SBC[key]=out;return out;
+}
+const evPrim={
+  attached(p){this.ch=p.chart;this.s=p.series;this.rq=p.requestUpdate},detached(){},updateAllViews(){},
+  paneViews(){return[{zOrder:()=>'bottom',renderer:()=>({draw:t=>t.useMediaCoordinateSpace(({context:x,mediaSize:z})=>{
+    if((!SET.sess&&!SET.news)||!D.length)return;
+    const ts=chart.timeScale(),vr=ts.getVisibleRange();if(!vr)return;
+    const W=z.width,H=z.height,last=D[D.length-1],tfs=typeof tf==='number'?tf:86400*(tf==='W'?7:30);
+    const xa=ts.timeToCoordinate(D[Math.max(0,D.length-2)].time),xb=ts.timeToCoordinate(last.time),sp=(xa!=null&&xb!=null)?Math.max(.5,xb-xa):6;
+    const X=tm=>tm<=last.time+tfs?px(tm):(xb==null?null:xb+(tm-last.time)/tfs*sp);
+    let ly=0;
+    const line=(tm,col,lab,dash)=>{const xx=X(tm);if(xx==null||xx<0||xx>W)return;x.strokeStyle=col;x.fillStyle=col;x.lineWidth=1;x.setLineDash(dash);x.beginPath();x.moveTo(xx,0);x.lineTo(xx,H);x.stroke();x.setLineDash([]);x.font='10px sans-serif';x.fillText(lab,xx+3,12+(ly++%3)*11)};
+    if(SET.sess){const nw=Date.now()/1000,td=irDate(nw);sessLines(nw-86400,nw+2*86400).forEach(([tm,c,l])=>{if(irDate(tm)===td)line(tm,c,l,[2,5])})}
+    if(SET.news){const my=symCcy(SYM);EVT.forEach(e=>{if(impN(e.impact)===3&&my.includes(e.country))line(e.ts,'#dc2626',e.country+' '+e.title.slice(0,16),[5,3])})}
+  })})}]}
+};
+candles.attachPrimitive(evPrim);
+setInterval(()=>{if(SET.news&&MT5.ok&&Date.now()-EVT_T>1800000)loadEvt(true).catch(()=>{})},60000);
+if(SET.news&&MT5.ok)setTimeout(()=>loadEvt().catch(()=>{}),4000);
+
+// ===== v20: کشیدن مستقیم خطوط، محافظ اخبار، ربات تلگرام، کارت پوزیشن =====
+async function srvPost(path,body,ms){const c=new AbortController(),t=setTimeout(()=>c.abort(),ms);try{const r=await fetch(SRV+path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body),signal:c.signal});const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.error||'HTTP '+r.status);return j}catch(e){throw new Error(e.name==='AbortError'?'زمان پاسخ تمام شد':e.message)}finally{clearTimeout(t)}}
+// ---- کارت‌های پوزیشن (با نوار SL تا TP) ----
+function posSummary(){
+  const tot=MT5.pos.reduce((s,x)=>s+(+x.profit||0),0),c=tot>=0?'#16a34a':'#dc2626';
+  return `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 10px;border-radius:10px;background:var(--grid,rgba(127,127,127,.12));margin-bottom:6px"><span class="mut" dir="ltr" style="font-size:12px">${MT5.pos.length} پوزیشن باز</span><b dir="ltr" style="color:${c}">مجموع: ${tot>=0?'+':''}${fm(tot)}</b></div>`;
+}
+function posCard(p){
+  const buy=p.side==='B',col=buy?'#2563eb':'#dc2626',pl=+p.profit||0,plc=pl>=0?'#16a34a':'#dc2626';let bar='';
+  if(p.sl&&p.tp&&p.current!=null){const span=(p.tp-p.sl)*(buy?1:-1);let pct=((p.current-p.sl)*(buy?1:-1))/(span||1);pct=Math.max(0,Math.min(1,pct));
+    bar=`<div style="position:relative;height:6px;border-radius:3px;margin:10px 0 3px;background:rgba(127,127,127,.25)"><div style="position:absolute;left:0;top:0;bottom:0;width:${(pct*100).toFixed(1)}%;border-radius:3px;background:${plc}"></div></div><div class="mut" dir="ltr" style="display:flex;justify-content:space-between;font-size:10px"><span>SL ${p.sl}</span><span>TP ${p.tp}</span></div>`}
+  else if(p.sl||p.tp)bar=`<div class="mut" dir="ltr" style="font-size:10px;margin-top:6px">${p.sl?'SL '+p.sl:''}${p.sl&&p.tp?'  ·  ':''}${p.tp?'TP '+p.tp:''}</div>`;
+  else bar='<div class="mut" style="font-size:10px;margin-top:6px">بدون SL / TP</div>';
+  return `<div class="ap" data-t="${p.ticket}" style="display:block;border-left:4px solid ${col};border-radius:10px;padding:10px 12px;margin:6px 0"><div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px"><div><b dir="ltr" style="font-size:15px">${p.symbol}</b> <b dir="ltr" style="color:${col};font-size:12px">${buy?'BUY':'SELL'}</b> <span class="mut" dir="ltr" style="font-size:12px">${(+p.lots).toFixed(2)} lot</span><div class="mut" dir="ltr" style="font-size:12px;margin-top:2px">${p.price} → <b style="color:currentColor">${p.current}</b></div></div><b dir="ltr" style="color:${plc};font-size:17px;white-space:nowrap">${pl>=0?'+':''}${fm(pl)}</b></div>${bar}</div>`;
+}
+// ---- کشیدن مستقیم خطوط SL/TP/ورود با لمس روی چارت ----
+let DRG=null;
+(()=>{
+  const c=$('chart'),pt=e=>(e.touches&&e.touches[0])||(e.changedTouches&&e.changedTouches[0])||e;
+  const hit=y=>{const p=subj();if(!p)return null;let best=null,bd=28;
+    [['sl',p.sl],['tp',p.tp],['en',(p===DRAFT&&p.pending)?p.entry:null]].forEach(([k,v])=>{if(v==null)return;const yy=candles.priceToCoordinate(v);if(yy==null)return;const d=Math.abs(yy-y);if(d<bd){bd=d;best=k}});return best};
+  const start=e=>{
+    if(SET.dl===0||DRG)return;if(!/^(CANVAS|TD|TABLE|TR)$/.test(e.target.tagName))return;
+    const t=pt(e),r=c.getBoundingClientRect(),x=t.clientX-r.left,y=t.clientY-r.top;if(x>chart.timeScale().width())return;
+    const k=hit(y);if(!k)return;DRG={k};window.__drag=true;e.preventDefault();e.stopPropagation();try{navigator.vibrate&&navigator.vibrate(12)}catch(_){}};
+  const move=e=>{if(!DRG)return;if(e.cancelable)e.preventDefault();const pr=candles.coordinateToPrice(pt(e).clientY-c.getBoundingClientRect().top);if(pr!=null)setLvl(DRG.k,pr)};
+  const end=()=>{if(!DRG)return;const p=subj();DRG=null;window.__drag=false;if(p&&p.live)liveModify()};
+  c.addEventListener('touchstart',start,{capture:true,passive:false});c.addEventListener('mousedown',start,true);
+  c.addEventListener('touchmove',e=>{if(DRG)e.stopPropagation()},{capture:true,passive:false});
+  window.addEventListener('touchmove',move,{capture:true,passive:false});window.addEventListener('mousemove',move,true);
+  ['touchend','touchcancel','mouseup'].forEach(t=>window.addEventListener(t,end,true));
+})();
+// ---- محافظ اخبار ----
+let NGS={enabled:false,mode:'warn',before:5,after:2,warn:15,impact:'High',log:[]};
+try{Object.assign(NGS,JSON.parse(localStorage.getItem('fx_ngs')||'{}'))}catch(e){}
+const ngSaveLocal=()=>{try{localStorage.setItem('fx_ngs',JSON.stringify({enabled:NGS.enabled,mode:NGS.mode,before:NGS.before,after:NGS.after,warn:NGS.warn,impact:NGS.impact}))}catch(e){}};
+async function guardSave(){ngSaveLocal();if(!MT5.ok)return;try{await mtPost('/api/guard',{enabled:NGS.enabled,mode:NGS.mode,before:NGS.before,after:NGS.after,warn:NGS.warn,impact:NGS.impact},10000)}catch(e){flash('ذخیره روی VPS ناموفق: '+e.message)}}
+async function guardLoad(){if(!MT5.ok)return;try{const j=await mtTO('/api/guard',8000);Object.assign(NGS,j)}catch(e){}}
+const ngB=document.createElement('div');ngB.id='ngb';ngB.style.cssText='position:absolute;top:58px;left:8px;right:8px;z-index:7;background:#b45309;color:#fff;padding:7px 10px;border-radius:10px;font-size:12px;font-weight:700;display:none;pointer-events:none';$('chart').appendChild(ngB);
+function ngEvent(syms,within,after){
+  const now=Date.now()/1000,cc=new Set();syms.forEach(s=>symCcy(String(s).replace(/[^A-Za-z]/g,'').toUpperCase()).forEach(x=>cc.add(x)));
+  return EVT.filter(e=>(e.impact==='High'||(NGS.impact==='Medium'&&e.impact==='Medium'))&&cc.has(e.country)&&e.ts-now<=within*60&&e.ts-now>=-after*60).sort((a,b)=>a.ts-b.ts)[0]||null;
+}
+const newsWarn=sym=>{const e=ngEvent([sym],30,0);return e?'\n⚠ خبر مهم '+e.country+' ('+e.title+') تا '+Math.max(0,Math.round((e.ts-Date.now()/1000)/60))+' دقیقه دیگر':''};
+function ngTick(){
+  if(!NGS.enabled){ngB.style.display='none';return}
+  if(!EVT.length||Date.now()-EVT_T>1800000)loadEvt().catch(()=>{});
+  const e=ngEvent([SYM].concat((MT5.pos||[]).map(p=>p.symbol)),NGS.warn,NGS.after);
+  if(!e){ngB.style.display='none';return}
+  const m=Math.round((e.ts-Date.now()/1000)/60);
+  ngB.textContent='⚠️ خبر مهم '+e.country+' · '+e.title+' — '+(m<=0?'هم‌اکنون':m+' دقیقه دیگر')+(NGS.mode==='close'?' · معامله‌های مرتبط '+NGS.before+' دقیقه قبل بسته می‌شوند':'');
+  ngB.style.display='block';
+}
+setInterval(ngTick,15000);setTimeout(()=>{guardLoad().then(ngTick)},3500);
+function openGuard(){
+  const dl=$('dlg');
+  dl.innerHTML=`<div class="row" style="justify-content:space-between"><button id="dcl">←</button><b>محافظ اخبار مهم</b></div>
+<p class="mut" style="font-size:12px;line-height:1.8">قبل از انتشار خبرهای پرتأثیر (قرمز) برای ارزهای معامله‌های باز شما هشدار می‌دهد، و در حالت «بستن خودکار» معامله‌ها را قبل از خبر می‌بندد تا حساب در نوسان خبر نسوزد. بستن خودکار روی VPS انجام می‌شود، پس حتی با بسته بودن اپ هم کار می‌کند (به پل MT5 نیاز دارد).</p>
+<label class="row"><span class="mut" style="flex:1">محافظ فعال باشد</span><input type="checkbox" id="g_on"${NGS.enabled?' checked':''}></label>
+<label class="row"><span class="mut" style="flex:1">حالت</span><select id="g_mode"><option value="warn"${NGS.mode==='warn'?' selected':''}>فقط هشدار</option><option value="close"${NGS.mode==='close'?' selected':''}>هشدار + بستن خودکار معامله‌ها</option></select></label>
+<label class="row"><span class="mut" style="flex:1">اهمیت خبر</span><select id="g_imp"><option value="High"${NGS.impact==='High'?' selected':''}>فقط مهم (قرمز)</option><option value="Medium"${NGS.impact==='Medium'?' selected':''}>متوسط و مهم</option></select></label>
+<label class="row"><span class="mut" style="flex:1">هشدار چند دقیقه قبل از خبر</span><input type="number" id="g_warn" min="1" max="120" value="${NGS.warn}" style="width:70px"></label>
+<label class="row"><span class="mut" style="flex:1">بستن خودکار چند دقیقه قبل از خبر</span><input type="number" id="g_bef" min="1" max="60" value="${NGS.before}" style="width:70px"></label>
+<label class="row"><span class="mut" style="flex:1">ادامه محافظت تا چند دقیقه بعد از خبر</span><input type="number" id="g_aft" min="0" max="30" value="${NGS.after}" style="width:70px"></label>
+<div class="row"><button id="g_ok">ذخیره</button></div><div id="g_st" class="mut" style="font-size:12px;line-height:1.8"></div><div id="g_log" class="mut" style="font-size:11px;line-height:1.7"></div>
+<p class="mut" style="font-size:11px">در حالت بستن خودکار، معامله‌ای که در بازه محافظت (از چند دقیقه قبل تا چند دقیقه بعد از خبر) باز باشد یا باز شود، بسته می‌شود. روی حساب واقعی فقط وقتی کار می‌کند که ALLOW_REAL=1 باشد. تقویم از منبع عمومی است و ممکن است ساعت یا اهمیت رویدادی اشتباه یا دیر به‌روز شود؛ به‌جای تکیه کامل، حجم معامله را هم کنترل کنید.</p>`;
+  dl.style.display='block';$('dcl').onclick=()=>dl.style.display='none';
+  const logs=()=>{$('g_log').innerHTML=(NGS.log||[]).slice(-8).reverse().map(l=>irDate(l.t)+' '+irTime(l.t)+' — '+l.msg).join('<br>')};logs();
+  $('g_st').textContent=MT5.ok?(MT5.acc&&MT5.acc.algo===false?'⚠ AutoTrading روی VPS خاموش است؛ بستن خودکار کار نمی‌کند.':'متصل به VPS: بستن خودکار روی سرور اجرا می‌شود.'):'بدون اتصال MT5 فقط هشدار روی چارت کار می‌کند.';
+  $('g_ok').onclick=async()=>{NGS.enabled=$('g_on').checked;NGS.mode=$('g_mode').value;NGS.impact=$('g_imp').value;NGS.warn=Math.max(1,+$('g_warn').value||15);NGS.before=Math.max(1,+$('g_bef').value||5);NGS.after=Math.max(0,+$('g_aft').value||0);
+    if(NGS.mode==='close'&&NGS.enabled&&!MT5.ok){alert('بستن خودکار به اتصال MT5 (پل VPS) نیاز دارد؛ حالت روی «فقط هشدار» ماند.');NGS.mode='warn'}
+    await guardSave();if(NGS.enabled)loadEvt().then(ngTick).catch(e=>flash(e.message));else ngTick();flash('ذخیره شد');await guardLoad();logs()};
+}
+// ---- ربات تلگرام ----
+function tgAlert(a){
+  if(!SET.tg_on)return;
+  if(MT5.ok&&MT5.acc&&MT5.acc.tg!==false){mtPost('/api/talerts',{id:a.id,symbol:MT5S(SYM),price:a.price,ref:lastPx()},10000).then(()=>{a._tg='mt5'}).catch(e=>flash('تلگرام: '+e.message))}
+  else if(SRV&&!pSub())srvPost('/api/alerts',{id:a.id,symbol:SYM,price:a.price,ref:lastPx()},10000).catch(()=>{});
+}
+function tgDel(a){if(MT5.ok)mtPost('/api/talerts/delete',{id:a.id},8000).catch(()=>{})}
+function openTG(){
+  const dl=$('dlg'),ok=MT5.ok&&MT5.acc?MT5.acc.tg:null;
+  dl.innerHTML=`<div class="row" style="justify-content:space-between"><button id="dcl">←</button><b>ربات تلگرام</b></div>
+<p class="mut" style="font-size:12px;line-height:1.9">هشدارهای قیمت (و اعلان‌های محافظ اخبار) مستقیم به تلگرام شما فرستاده می‌شود، حتی وقتی اپ بسته است. کلید ربات فقط روی سرور (VPS یا Render) نگه داشته می‌شود و داخل اپ ذخیره نمی‌شود.</p>
+<label class="row"><span class="mut" style="flex:1">هشدارهای قیمت به تلگرام هم برود</span><input type="checkbox" id="t_on"${SET.tg_on?' checked':''}></label>
+<div class="mut" style="font-size:12px;line-height:1.9;margin:8px 0">وضعیت: ${ok===null?'برای وضعیت دقیق به MT5 وصل شوید (یا سرور Render را تنظیم کنید)':ok?'✓ روی VPS تنظیم شده':'✗ روی VPS تنظیم نشده'}</div>
+<div class="row"><button id="t_test">ارسال پیام آزمایشی</button><button id="t_id">یافتن Chat ID</button></div><div id="t_st" class="mut" style="font-size:12px;line-height:1.9;margin:8px 0"></div>
+<div class="mut" style="font-size:12px;line-height:2">
+<b>راه‌اندازی:</b><br>۱) در تلگرام به @BotFather پیام بدهید، <span dir="ltr">/newbot</span> بزنید و توکن را بگیرید.<br>۲) برای ربات خودتان هر پیامی بفرستید (مثلاً سلام).<br>۳) روی VPS در فایل <span dir="ltr">run.bat</span> مقدار <span dir="ltr">TELEGRAM_BOT_TOKEN</span> را بگذارید و پل را دوباره اجرا کنید (برای سرور Render هم همین دو متغیر را در Environment بگذارید).<br>۴) «یافتن Chat ID» را بزنید و عدد را در <span dir="ltr">TELEGRAM_CHAT_ID</span> بگذارید. دوباره اجرا کنید.<br>۵) «ارسال پیام آزمایشی» را بزنید.</div>`;
+  dl.style.display='block';$('dcl').onclick=()=>dl.style.display='none';
+  $('t_on').onchange=()=>{SET.tg_on=$('t_on').checked?1:0;saveSET()};
+  const st=t=>$('t_st').textContent=t;
+  $('t_test').onclick=async()=>{st('در حال ارسال...');try{if(MT5.ok)await mtPost('/api/telegram/test',{},15000);else if(SRV)await srvPost('/api/telegram/test',{},15000);else throw new Error('به MT5 یا سرور Render وصل نیستید');st('✓ پیام آزمایشی ارسال شد؛ تلگرام را ببینید')}catch(e){st('✗ '+e.message)}};
+  $('t_id').onclick=async()=>{if(!MT5.ok){st('این بخش به اتصال MT5 نیاز دارد؛ یا از @userinfobot شناسه خود را بگیرید');return}st('در حال جستجو...');try{const a=await mtTO('/api/telegram/chatid',15000);st(a.length?'Chat ID: '+a.map(x=>x.id+(x.name?' ('+x.name+')':'')).join(' ، '):'چیزی پیدا نشد؛ اول به ربات پیام بدهید')}catch(e){st('✗ '+e.message)}};
 }
 
 let ST={};try{ST=JSON.parse(localStorage.getItem('fx_state')||'{}')||{}}catch(e){}
