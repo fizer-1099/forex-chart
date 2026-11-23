@@ -123,9 +123,36 @@ app.get('/api/news', async (req, res) => {
 });
 
 // ===== تحلیل هوش مصنوعی (کلید فقط روی سرور) =====
+// ===== تحلیل هوش مصنوعی با هر سرویس‌دهنده (Anthropic یا هر API سازگار با OpenAI) =====
+// متغیرهای محیطی: AI_PROVIDER (anthropic | openai) ، AI_BASE_URL ، AI_API_KEY ، AI_MODEL
+async function callAI(prompt) {
+  const prov = (process.env.AI_PROVIDER || 'anthropic').toLowerCase();
+  const key = process.env.AI_API_KEY || process.env.ANTHROPIC_API_KEY;
+  if (!key) throw new Error('کلید هوش مصنوعی روی سرور تنظیم نشده (AI_API_KEY)');
+  if (prov === 'anthropic') {
+    const r = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+      body: JSON.stringify({ model: process.env.AI_MODEL || process.env.ANTHROPIC_MODEL || 'claude-sonnet-5-5', max_tokens: 1800, messages: [{ role: 'user', content: prompt }] })
+    });
+    const j = await r.json();
+    if (!r.ok) throw new Error((j.error && j.error.message) || ('HTTP ' + r.status));
+    return (j.content || []).map(c => c.text || '').join('\n');
+  }
+  const base = (process.env.AI_BASE_URL || 'https://api.openai.com/v1').replace(/\/$/, '');
+  const url = base.endsWith('/chat/completions') ? base : base + '/chat/completions';
+  if (!process.env.AI_MODEL) throw new Error('نام مدل (AI_MODEL) تنظیم نشده');
+  const r = await fetch(url, {
+    method: 'POST',
+    headers: { Authorization: 'Bearer ' + key, 'content-type': 'application/json' },
+    body: JSON.stringify({ model: process.env.AI_MODEL, messages: [{ role: 'user', content: prompt }] })
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error((j.error && (j.error.message || j.error)) || ('HTTP ' + r.status));
+  return j.choices[0].message.content;
+}
+
 app.post('/api/analyze', async (req, res) => {
-  const KEYA = process.env.ANTHROPIC_API_KEY;
-  if (!KEYA) return res.status(500).json({ error: 'ANTHROPIC_API_KEY روی سرور تنظیم نشده' });
   try {
     const { symbol = '', candles = [] } = req.body || {};
     const last = candles.slice(-150);
@@ -142,31 +169,40 @@ ${news}
 ۱) تحلیل تکنیکال: روند، سطوح حمایت و مقاومت تقریبی، الگوهای مهم، و نظر کلی کوتاه‌مدت.
 ۲) تحلیل اقتصادی: نگاه روزانه و هفتگی بر اساس اخبار و تاثیرشان روی این نماد.
 ۳) جمع‌بندی: یک نتیجه کلی و سطوح کلیدی که باید رصد شوند.`;
-    const r = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: { 'x-api-key': KEYA, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-      body: JSON.stringify({ model: process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-5', max_tokens: 1800, messages: [{ role: 'user', content: prompt }] })
-    });
-    const j = await r.json();
-    if (!r.ok) throw new Error((j.error && j.error.message) || ('HTTP ' + r.status));
-    res.json({ text: (j.content || []).map(c => c.text || '').join('\n') });
+    res.json({ text: await callAI(prompt) });
   } catch (e) { res.status(502).json({ error: e.message }); }
 });
 
 
 // ===== ربات تلگرام برای هشدارهای قیمتی =====
+let lastTgErr = '';
+function normChat(c) {
+  c = String(c || '').trim().replace(/^(https?:\/\/)?(t|telegram)\.me\//i, '').replace(/\/$/, '');
+  if (c && !/^-?\d+$/.test(c) && !c.startsWith('@')) c = '@' + c;
+  return c;
+}
+function tgExplain(d) {
+  const t = String(d || '');
+  if (/chat not found/i.test(t)) return 'شناسه یا نام کانال اشتباه است، یا ربات عضو و ادمین کانال نیست (' + t + ')';
+  if (/not a member|not enough rights|no rights to send|administrator/i.test(t)) return 'ربات را به‌عنوان Administrator با مجوز Post Messages به کانال اضافه کنید (' + t + ')';
+  if (/unauthorized/i.test(t)) return 'توکن ربات اشتباه است (' + t + ')';
+  return t;
+}
 async function sendTelegram(text, token, chatId) {
   const tok = token || process.env.TELEGRAM_BOT_TOKEN;
-  const cid = chatId || process.env.TELEGRAM_CHAT_ID;
-  if (!tok || !cid) return false;
+  const cid = normChat(chatId || process.env.TELEGRAM_CHAT_ID);
+  if (!tok || !cid) { lastTgErr = 'توکن ربات یا شناسه چت تنظیم نشده است'; return false; }
   try {
     const res = await fetch(`https://api.telegram.org/bot${tok}/sendMessage`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ chat_id: cid, text, parse_mode: 'HTML' })
     });
-    return res.ok;
+    if (!res.ok) { const j = await res.json().catch(() => ({})); lastTgErr = tgExplain(j.description || ('HTTP ' + res.status)); return false; }
+    lastTgErr = '';
+    return true;
   } catch (e) {
+    lastTgErr = 'اتصال سرور به تلگرام ناموفق بود: ' + e.message;
     return false;
   }
 }
@@ -175,7 +211,7 @@ app.post('/api/telegram/test', async (req, res) => {
   const { token, chatId } = req.body || {};
   const ok = await sendTelegram('🔔 <b>تست ربات تلگرام فارکس چارت</b>\nربات با موفقیت وصل شد و آماده ارسال هشدارهاست!', token, chatId);
   if (ok) res.json({ ok: 1 });
-  else res.status(400).json({ error: 'ارسال ناموفق بود؛ توکن ربات یا Chat ID را بررسی کنید.' });
+  else res.status(400).json({ error: 'ارسال ناموفق: ' + lastTgErr });
 });
 
 app.post('/api/telegram/send', async (req, res) => {

@@ -92,8 +92,8 @@ def ping():
     return jsonify(login=a.login, server=a.server, demo=a.trade_mode == mt5.ACCOUNT_TRADE_MODE_DEMO,
                    balance=a.balance, equity=a.equity, currency=a.currency, allow_real=ALLOW_REAL, max_lot=MAX_LOT,
                    algo=bool(getattr(mt5.terminal_info(), 'trade_allowed', True)),
-                   ai=bool(os.environ.get("ANTHROPIC_API_KEY")),
-                   tg=bool(os.environ.get("TELEGRAM_BOT_TOKEN") and os.environ.get("TELEGRAM_CHAT_ID")))
+                   ai=bool(ai_conf()["key"]),
+                   tg=bool(all(tg_conf())))
 
 
 @app.get("/api/candles")
@@ -518,7 +518,7 @@ def analyze():
 
 داده‌ها:
 {_json.dumps(data, ensure_ascii=False)}"""
-        return call_claude(prompt)
+        return call_llm(prompt)
 
     try:
         text = cached("ai|" + "|".join(sorted(symbols)) + "|" + scope, 1200, build)
@@ -547,32 +547,74 @@ def _save(name, data):
         pass
 
 
+TG_ERR = ""
+
+
+def norm_chat(c):
+    c = str(c or "").strip()
+    for pre in ("https://t.me/", "http://t.me/", "t.me/", "telegram.me/"):
+        if c.lower().startswith(pre):
+            c = c[len(pre):]
+    c = c.strip("/")
+    if c and not c.lstrip("-").isdigit() and not c.startswith("@"):
+        c = "@" + c
+    return c
+
+
+def tg_conf():
+    f = _load("tg.json", {})
+    tok = (f.get("token") or os.environ.get("TELEGRAM_BOT_TOKEN") or "").strip()
+    cid = norm_chat(f.get("chat_id") or os.environ.get("TELEGRAM_CHAT_ID") or "")
+    return tok, cid
+
+
+def tg_explain(d):
+    low = d.lower()
+    if "chat not found" in low:
+        return f"شناسه یا نام کانال اشتباه است، یا ربات عضو و ادمین کانال نیست ({d})"
+    if any(k in low for k in ("not a member", "not enough rights", "no rights to send", "administrator")):
+        return f"ربات را به‌عنوان Administrator با مجوز Post Messages به کانال اضافه کنید ({d})"
+    if "unauthorized" in low:
+        return f"توکن ربات اشتباه است ({d})"
+    return d
+
+
 def tg_send(text):
-    tok, cid = os.environ.get("TELEGRAM_BOT_TOKEN"), os.environ.get("TELEGRAM_CHAT_ID")
+    global TG_ERR
+    tok, cid = tg_conf()
     if not tok or not cid:
+        TG_ERR = "توکن ربات یا شناسه چت تنظیم نشده است"
         return False
     try:
         body = _json.dumps({"chat_id": cid, "text": text, "parse_mode": "HTML"}).encode()
         req = urllib.request.Request(f"https://api.telegram.org/bot{tok}/sendMessage", data=body,
                                      headers={"content-type": "application/json"})
         urllib.request.urlopen(req, timeout=15).read()
+        TG_ERR = ""
         return True
-    except Exception:
-        return False
+    except urllib.error.HTTPError as e:
+        try:
+            d = _json.loads(e.read().decode()).get("description", "")
+        except Exception:
+            d = str(e)
+        TG_ERR = tg_explain(d)
+    except Exception as e:
+        TG_ERR = f"اتصال VPS به api.telegram.org ناموفق بود ({e})"
+    return False
 
 
 @app.post("/api/telegram/test")
 def tg_test():
     if tg_send("🔔 <b>تست ربات تلگرام</b>\nپل MT5 با موفقیت به تلگرام وصل است."):
         return jsonify(ok=1)
-    return jsonify(error="ارسال ناموفق: TELEGRAM_BOT_TOKEN و TELEGRAM_CHAT_ID را در run.bat بررسی کنید و اول به ربات یک پیام بدهید"), 400
+    return jsonify(error="ارسال ناموفق: " + TG_ERR), 400
 
 
 @app.get("/api/telegram/chatid")
 def tg_chatid():
-    tok = os.environ.get("TELEGRAM_BOT_TOKEN")
+    tok, _ = tg_conf()
     if not tok:
-        return jsonify(error="TELEGRAM_BOT_TOKEN در run.bat تنظیم نشده است"), 400
+        return jsonify(error="توکن ربات تنظیم نشده است"), 400
     try:
         j = _json.loads(http_get(f"https://api.telegram.org/bot{tok}/getUpdates"))
     except Exception as ex:
@@ -583,6 +625,94 @@ def tg_chatid():
         if c.get("id"):
             ids[c["id"]] = c.get("first_name") or c.get("title") or ""
     return jsonify([dict(id=k, name=v) for k, v in ids.items()])
+
+
+@app.get("/api/tgconfig")
+def tgconfig_get():
+    tok, cid = tg_conf()
+    return jsonify(has_token=bool(tok), token_tail=tok[-4:] if tok else "", chat_id=cid)
+
+
+@app.post("/api/tgconfig")
+def tgconfig_set():
+    d = request.get_json(force=True)
+    cur = {} if d.get("clear") else _load("tg.json", {})
+    if d.get("token"):
+        cur["token"] = str(d["token"]).strip()
+    if "chat_id" in d:
+        cur["chat_id"] = norm_chat(d["chat_id"])
+    _save("tg.json", cur)
+    return tgconfig_get()
+
+
+# ---- سرویس هوش مصنوعی: Anthropic یا هر API سازگار با OpenAI (OpenAI، DeepSeek، OpenRouter، سرویس‌های ایرانی و...) ----
+def ai_conf():
+    f = _load("ai.json", {})
+    prov = (f.get("provider") or os.environ.get("AI_PROVIDER") or "anthropic").lower()
+    key = f.get("key") or os.environ.get("AI_API_KEY") or os.environ.get("ANTHROPIC_API_KEY") or ""
+    base = f.get("base_url") or os.environ.get("AI_BASE_URL") or ""
+    model = f.get("model") or os.environ.get("AI_MODEL") or ("claude-sonnet-5-5" if prov == "anthropic" else "")
+    return dict(provider=prov, key=key, base_url=base, model=model)
+
+
+def call_llm(prompt):
+    c = ai_conf()
+    if not c["key"]:
+        raise RuntimeError("سرویس هوش مصنوعی تنظیم نشده است (در اپ: تحلیل هوشمند ← تنظیم سرویس)")
+    if c["provider"] == "anthropic":
+        url = "https://api.anthropic.com/v1/messages"
+        headers = {"x-api-key": c["key"], "anthropic-version": "2023-06-01", "content-type": "application/json"}
+        body = {"model": c["model"], "max_tokens": 4500, "messages": [{"role": "user", "content": prompt}]}
+    else:
+        if not c["base_url"] or not c["model"]:
+            raise RuntimeError("آدرس سرویس (Base URL) و نام مدل را وارد کنید")
+        base = c["base_url"].rstrip("/")
+        url = base if base.endswith("/chat/completions") else base + "/chat/completions"
+        headers = {"Authorization": "Bearer " + c["key"], "content-type": "application/json"}
+        body = {"model": c["model"], "messages": [{"role": "user", "content": prompt}]}
+    req = urllib.request.Request(url, data=_json.dumps(body).encode(), headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=170) as r:
+            j = _json.loads(r.read())
+    except urllib.error.HTTPError as e:
+        raise RuntimeError(f"خطای سرویس هوش مصنوعی {e.code}: {e.read().decode('utf-8', 'ignore')[:300]}")
+    except Exception as e:
+        raise RuntimeError(f"اتصال به سرویس هوش مصنوعی ناموفق بود: {e}")
+    if c["provider"] == "anthropic":
+        return "".join(b.get("text", "") for b in j.get("content", []) if b.get("type") == "text")
+    try:
+        return j["choices"][0]["message"]["content"]
+    except Exception:
+        raise RuntimeError("پاسخ سرویس قالب OpenAI نداشت: " + _json.dumps(j, ensure_ascii=False)[:200])
+
+
+@app.get("/api/aiconfig")
+def aiconfig_get():
+    c = ai_conf()
+    return jsonify(provider=c["provider"], base_url=c["base_url"], model=c["model"], has_key=bool(c["key"]))
+
+
+@app.post("/api/aiconfig")
+def aiconfig_set():
+    d = request.get_json(force=True)
+    cur = {} if d.get("clear") else _load("ai.json", {})
+    for k in ("provider", "base_url", "model"):
+        if k in d:
+            cur[k] = str(d[k]).strip()
+    if d.get("key"):
+        cur["key"] = str(d["key"]).strip()
+    _save("ai.json", cur)
+    for k in [k for k in CACHE if str(k).startswith("ai|")]:
+        del CACHE[k]
+    return aiconfig_get()
+
+
+@app.post("/api/aitest")
+def aitest():
+    try:
+        return jsonify(text=call_llm("فقط یک کلمه بنویس: OK")[:200])
+    except Exception as ex:
+        return jsonify(error=str(ex)), 502
 
 
 TALERTS = _load("talerts.json", [])
