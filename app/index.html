@@ -646,7 +646,7 @@ async function binanceRows(sym,tf,days){
 }
 async function fetchSym(sym,first){
   const tf=localStorage.getItem('h_tf')||'m15',days=+localStorage.getItem('h_days')||30;CURTF=tf;
-  if(MT5.ok){try{const j=await mt('/api/candles?symbol='+encodeURIComponent(MT5S(sym))+'&tf='+tf+'&n=20000');if(j.rows&&j.rows.length>10){setRows(j.rows.map(x=>({time:x[0],open:x[1],high:x[2],low:x[3],close:x[4]})),true,'MT5 · '+(MT5.acc.demo?'DEMO':'REAL'),j.digits);return true}}catch(e){DERR='MT5: '+e.message}}
+  if(MT5.ok){try{const j=await mt('/api/candles?symbol='+encodeURIComponent(MT5S(sym))+'&tf='+tf+'&n=20000');if(j.rows&&j.rows.length>10){setRows(j.rows.map(x=>({time:x[0],open:x[1],high:x[2],low:x[3],close:x[4]})),true,(MT5.acc.platform||'MT5')+' · '+(MT5.acc.demo?'DEMO':'REAL'),j.digits);return true}}catch(e){DERR='MT5: '+e.message}}
   try{
     if(SRV){const r=await fetch(`${SRV}/api/history?symbol=${sym}&tf=${tf}&days=${days}`);
       if(r.ok){const a=await r.json();if(Array.isArray(a)&&a.length>10){setRows(a.map(x=>({time:x[0],open:x[1],high:x[2],low:x[3],close:x[4]})),true,'سرور: Dukascopy/Binance');return true}else DERR=a.message||'پاسخ خالی از سرور'}else DERR='سرور خطا داد '+r.status}
@@ -689,7 +689,7 @@ new MutationObserver(oscLayout).observe($('oscs'),{childList:true});
 })();
 const SB=document.createElement('div');SB.id='srcb';SB.style.cssText='position:absolute;top:3px;left:6px;z-index:4;pointer-events:none;font-size:10px;padding:2px 7px;border-radius:6px;color:#fff;direction:rtl;max-width:92%';$('chart').appendChild(SB);
 function badge(){const last=D.length?D[D.length-1]:null,real=SRCL!=='Sample';SB.style.background=real?'#16a34a':'#d97706';
-  SB.textContent=(real?'✓ '+SRCL:'⚠ دیتای نمونه (غیرواقعی)'+(DERR?' — '+DERR:''))+(last?' · آخرین '+last.close.toFixed(DEC)+' @ '+fmtT(last.time)+(tzOff()?'':'Z'):'')+' · v21'}
+  SB.textContent=(real?'✓ '+SRCL:'⚠ دیتای نمونه (غیرواقعی)'+(DERR?' — '+DERR:''))+(last?' · آخرین '+last.close.toFixed(DEC)+' @ '+fmtT(last.time)+(tzOff()?'':'Z'):'')+' · v22'}
 
 // انتخاب خودکار دیتای پایه بر اساس تایم‌فریم
 let CURTF=null;
@@ -899,7 +899,7 @@ function openSettings(){
 <label class="row"><span class="mut" style="flex:1">خطوط Bid و Ask (MT5)</span><input type="checkbox" id="s_ba"${c.ba===0?'':' checked'}></label>
 <label class="row"><span class="mut" style="flex:1">صدای هشدار</span><input type="checkbox" id="s_snd"${c.snd===0?'':' checked'}></label>
 <label class="row"><span class="mut" style="flex:1">منوی دایره‌ای (لمس طولانی روی چارت)</span><input type="checkbox" id="s_ring"${c.ring===0?'':' checked'}></label>
-<label class="row"><span class="mut" style="flex:1">شمارش معکوس کندل (ساعت ایران)</span><input type="checkbox" id="s_cd"${c.cd===0?'':' checked'}></label>
+<label class="row"><span class="mut" style="flex:1">شمارش معکوس کندل (زیر قیمت، روی محور)</span><input type="checkbox" id="s_cd"${c.cd===0?'':' checked'}></label>
 <label class="row"><span class="mut" style="flex:1">کشیدن مستقیم خطوط SL/TP روی چارت</span><input type="checkbox" id="s_dl"${c.dl===0?'':' checked'}></label>
 <h4>ساعت</h4>
 <label class="row"><span class="mut" style="flex:1">منطقه زمانی نمودار</span><select id="s_tz">${[['utc','UTC'],['tehran','تهران (+3:30)'],['local','ساعت گوشی'],['broker','ساعت سرور بروکر']].map(([v,l])=>`<option value="${v}"${(c.tz||'utc')===v?' selected':''}>${l}</option>`).join('')}</select></label>
@@ -1376,19 +1376,22 @@ function openWatch(){
   $('wrf').onclick=load;load();WT=setInterval(()=>{if($q('wl'))load()},MT5.ok?5000:20000);
 }
 // ---- شمارش معکوس کندل (ساعت ایران) ----
-const cdl=document.createElement('div');cdl.id='cdl';cdl.style.cssText='position:absolute;z-index:5;pointer-events:none;font-size:11px;padding:2px 6px;border-radius:6px;background:rgba(0,0,0,.65);color:#fff;direction:ltr;white-space:nowrap;display:none';$('chart').appendChild(cdl);
+const cdl=document.createElement('div');cdl.id='cdl';cdl.style.cssText='position:absolute;z-index:5;pointer-events:none;font-size:11px;line-height:15px;font-weight:600;padding:1px 0;border-radius:0 0 3px 3px;text-align:center;color:#fff;direction:ltr;white-space:nowrap;display:none;box-sizing:border-box;font-variant-numeric:tabular-nums';$('chart').appendChild(cdl);
 function fmtRem(s){s=Math.floor(s);const d=Math.floor(s/86400),h=Math.floor(s%86400/3600),m=Math.floor(s%3600/60),x=s%60;return d?d+'d '+h+'h':h?p2(h)+':'+p2(m)+':'+p2(x):p2(m)+':'+p2(x)}
 function irHM(ms){const d=new Date(ms+12600000);return p2(d.getUTCHours())+':'+p2(d.getUTCMinutes())}
 function closeTimeOf(b){if(tf==='W')return b.time+604800;if(tf==='M'){const d=new Date(b.time*1000);return Date.UTC(d.getUTCFullYear(),d.getUTCMonth()+1,1)/1000}return b.time+tf}
+// شمارش معکوس زیر برچسب قیمت، روی محور قیمت (مثل TradingView)
+function psW(){try{const w=chart.priceScale('right').width();if(w>0)return w}catch(e){}return Math.max(64,$('chart').clientWidth-chart.timeScale().width())}
 setInterval(()=>{
   if(SET.cd===0||rp.on||!D.length){cdl.style.display='none';return}
-  const b=D[D.length-1],x=chart.timeScale().timeToCoordinate(b.time),y=candles.priceToCoordinate(b.close);
-  if(x==null||y==null){cdl.style.display='none';return}
+  const b=D[D.length-1],y=candles.priceToCoordinate(b.close);
+  if(y==null||y<0||y>$('chart').clientHeight-28){cdl.style.display='none';return}
   const ct=closeTimeOf(b),rem=ct-Date.now()/1000;
   if(rem<-tf*2&&typeof tf==='number'){cdl.style.display='none';return}
-  const d=new Date((ct+12600)*1000),long=(typeof tf!=='number')||tf>=86400;
-  cdl.textContent='⏱ '+fmtRem(Math.max(0,rem))+' | '+(long?p2(d.getUTCMonth()+1)+'/'+p2(d.getUTCDate())+' ':'')+p2(d.getUTCHours())+':'+p2(d.getUTCMinutes());
-  cdl.style.display='block';cdl.style.left=Math.max(4,Math.min(x+12,$('chart').clientWidth-cdl.offsetWidth-70))+'px';cdl.style.top=(y-10)+'px';
+  const w=psW();
+  cdl.textContent=fmtRem(Math.max(0,rem));
+  cdl.style.background=b.close>=b.open?(SET.up||css('--up')):(SET.dn||css('--dn'));
+  cdl.style.width=w+'px';cdl.style.left=($('chart').clientWidth-w)+'px';cdl.style.top=(y+9)+'px';cdl.style.display='block';
 },500);
 // ---- ساعت بازارها (به وقت ایران) ----
 function tzParts(tz,ms){const o={};new Intl.DateTimeFormat('en-US',{timeZone:tz,hourCycle:'h23',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',weekday:'short'}).formatToParts(new Date(ms)).forEach(p=>o[p.type]=p.value);return o}

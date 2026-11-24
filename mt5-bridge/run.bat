@@ -1,6 +1,8 @@
 @echo off
-REM قبل از اجرا این دو مقدار را عوض کنید
+REM قبل از اجرا این مقادیر را عوض کنید
 set BRIDGE_TOKEN=PUT_A_LONG_RANDOM_TOKEN_HERE
+REM پلتفرم: mt5 یا mt4  (برای mt4 اکسپرت mt4\FxBridge.mq4 باید داخل MT4 اجرا شود؛ راهنما در README-VPS.md)
+set MT_PLATFORM=mt5
 set MT5_UTC_OFFSET=3
 set MAX_LOT=0.1
 REM تحلیل هوشمند: ترجیحاً از داخل اپ (تحلیل هوشمند ← تنظیم سرویس) تنظیم کنید؛ اینجا فقط مقدار پیش‌فرض است

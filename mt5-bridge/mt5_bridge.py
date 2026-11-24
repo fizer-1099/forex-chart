@@ -1,7 +1,8 @@
-"""پل بین اپ و MT5 روی VPS ویندوزی.
+"""پل بین اپ و MetaTrader (MT5 یا MT4) روی VPS ویندوزی.
 - فقط روی 127.0.0.1 گوش می‌دهد؛ با Cloudflare Tunnel (HTTPS) در دسترس اپ قرار می‌گیرد.
 - همه درخواست‌ها نیاز به هدر X-Token دارند.
 - پیش‌فرض: فقط حساب دمو. حساب واقعی فقط با ALLOW_REAL=1.
+- پلتفرم با متغیر MT_PLATFORM انتخاب می‌شود: mt5 (پیش‌فرض) یا mt4 (با اکسپرت FxBridge.mq4).
 """
 import os, time, hmac, threading, json as _json, urllib.request, urllib.error
 import xml.etree.ElementTree as ET
@@ -9,42 +10,26 @@ from datetime import datetime, timezone, timedelta
 from email.utils import parsedate_to_datetime
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-import MetaTrader5 as mt5
+from backends import BErr, make_backend
 
 TOKEN = os.environ.get("BRIDGE_TOKEN", "")
 MAX_LOT = float(os.environ.get("MAX_LOT", "0.1"))
 ALLOW_REAL = os.environ.get("ALLOW_REAL", "0") == "1"
 UTC_OFFSET_H = os.environ.get("MT5_UTC_OFFSET")  # اختلاف ساعت سرور بروکر با UTC (ساعت)
 PORT = int(os.environ.get("BRIDGE_PORT", "8787"))
-MAGIC = 777
+PLATFORM = os.environ.get("MT_PLATFORM", "mt5").strip().lower()
 if len(TOKEN) < 24:
     raise SystemExit("BRIDGE_TOKEN باید حداقل ۲۴ کاراکتر باشد")
 
+BE = make_backend(PLATFORM, UTC_OFFSET_H)
+
 app = Flask(__name__)
 CORS(app, allow_headers=["X-Token", "Content-Type"])
-lock = threading.Lock()
-
-TF = {"m1": mt5.TIMEFRAME_M1, "m2": mt5.TIMEFRAME_M2, "m3": mt5.TIMEFRAME_M3, "m4": mt5.TIMEFRAME_M4,
-      "m5": mt5.TIMEFRAME_M5, "m6": mt5.TIMEFRAME_M6, "m10": mt5.TIMEFRAME_M10, "m12": mt5.TIMEFRAME_M12,
-      "m15": mt5.TIMEFRAME_M15, "m20": mt5.TIMEFRAME_M20, "m30": mt5.TIMEFRAME_M30,
-      "h1": mt5.TIMEFRAME_H1, "h2": mt5.TIMEFRAME_H2, "h3": mt5.TIMEFRAME_H3, "h4": mt5.TIMEFRAME_H4,
-      "h6": mt5.TIMEFRAME_H6, "h8": mt5.TIMEFRAME_H8, "h12": mt5.TIMEFRAME_H12,
-      "d1": mt5.TIMEFRAME_D1, "w1": mt5.TIMEFRAME_W1, "mn1": mt5.TIMEFRAME_MN1}
-PEND = {"bl": mt5.ORDER_TYPE_BUY_LIMIT, "sl": mt5.ORDER_TYPE_SELL_LIMIT,
-        "bs": mt5.ORDER_TYPE_BUY_STOP, "ss": mt5.ORDER_TYPE_SELL_STOP}
-PEND_BACK = {v: (k, "B" if k[0] == "b" else "S") for k, v in PEND.items()}
 
 
-def offset():
-    if UTC_OFFSET_H is not None:
-        return int(float(UTC_OFFSET_H) * 3600)
-    for s in ("EURUSD", "XAUUSD", "BTCUSD"):  # تشخیص تقریبی؛ اگر بازار بسته است MT5_UTC_OFFSET را بدهید
-        t = mt5.symbol_info_tick(s)
-        if t:
-            d = t.time - time.time()
-            if abs(d - round(d / 3600) * 3600) < 120 and abs(d) < 15 * 3600:
-                return int(round(d / 3600) * 3600)
-    return 0
+@app.errorhandler(BErr)
+def _berr(e):
+    return jsonify(error=e.msg), e.code
 
 
 @app.before_request
@@ -55,97 +40,68 @@ def auth():
         return jsonify(error="unauthorized"), 401
 
 
-HINTS = {
-    10027: "معاملات الگوریتمی (AutoTrading) در MT5 روی VPS خاموش است: دکمه Algo Trading را روشن کنید و در Tools ← Options ← Expert Advisors گزینه Allow algorithmic trading را تیک بزنید",
-    10019: "موجودی یا مارجین کافی نیست", 10018: "بازار بسته است", 10017: "معامله برای این نماد غیرفعال است",
-    10014: "حجم نامعتبر است", 10015: "قیمت نامعتبر است", 10016: "SL یا TP نامعتبر یا خیلی نزدیک به قیمت است",
-    10030: "نوع پر شدن (filling) پذیرفته نشد", 10004: "قیمت تغییر کرد؛ دوباره تلاش کنید",
-    10031: "اتصال MT5 به سرور بروکر برقرار نیست", 10024: "درخواست‌ها زیاد است؛ کمی صبر کنید",
-}
-
-
 def guard():
-    a = mt5.account_info()
+    a = BE.account()
     if a is None:
-        return "MT5 آماده نیست"
-    ti = mt5.terminal_info()
-    if ti is not None and not ti.trade_allowed:
-        return HINTS[10027]
-    if a.trade_mode != mt5.ACCOUNT_TRADE_MODE_DEMO and not ALLOW_REAL:
+        return f"{BE.name} آماده نیست"
+    if not a["algo"]:
+        return BE.algo_hint
+    if not a["demo"] and not ALLOW_REAL:
         return "حساب واقعی مسدود است (ALLOW_REAL=1 لازم است)"
     return None
 
 
-def done(r):
-    if r is None:
-        return jsonify(error=str(mt5.last_error())), 502
-    if r.retcode not in (mt5.TRADE_RETCODE_DONE, mt5.TRADE_RETCODE_PLACED):
-        return jsonify(error=f"{r.retcode}: {HINTS.get(r.retcode, '')} ({r.comment})"), 400
-    return jsonify(ticket=r.order or r.deal, comment=r.comment)
+# ---- مسیرهای اختصاصی اکسپرت MT4 ----
+@app.post("/ea/poll")
+def ea_poll():
+    if not hasattr(BE, "ea_poll"):
+        return jsonify(error="MT_PLATFORM روی mt4 تنظیم نشده است"), 400
+    d = _json.loads(request.get_data().decode("utf-8", "replace").replace("\x00", "") or "{}")
+    return BE.ea_poll(d), 200, {"Content-Type": "text/plain; charset=utf-8"}
+
+
+@app.post("/ea/result")
+def ea_result():
+    if not hasattr(BE, "ea_result"):
+        return jsonify(error="MT_PLATFORM روی mt4 تنظیم نشده است"), 400
+    BE.ea_result(request.args["id"], request.args.get("last", "1") == "1", request.get_data().decode("utf-8", "replace"))
+    return "ok"
 
 
 @app.get("/api/ping")
 def ping():
-    a = mt5.account_info()
+    a = BE.account()
     if a is None:
-        return jsonify(error="MT5 آماده نیست"), 503
-    return jsonify(login=a.login, server=a.server, demo=a.trade_mode == mt5.ACCOUNT_TRADE_MODE_DEMO,
-                   balance=a.balance, equity=a.equity, currency=a.currency, allow_real=ALLOW_REAL, max_lot=MAX_LOT,
-                   algo=bool(getattr(mt5.terminal_info(), 'trade_allowed', True)),
-                   ai=bool(ai_conf()["key"]),
-                   tg=bool(all(tg_conf())))
+        return jsonify(error=f"{BE.name} آماده نیست" + (" (اکسپرت FxBridge در MT4 وصل نیست)" if BE.name == "MT4" else "")), 503
+    return jsonify(login=a["login"], server=a["server"], demo=a["demo"], balance=a["balance"], equity=a["equity"],
+                   currency=a["currency"], allow_real=ALLOW_REAL, max_lot=MAX_LOT, algo=a["algo"],
+                   ai=bool(ai_conf()["key"]), tg=bool(all(tg_conf())), platform=BE.name)
 
 
 @app.get("/api/candles")
 def candles():
     sym = request.args["symbol"]
-    tf = TF.get(request.args.get("tf", "m15"))
     n = min(int(request.args.get("n", "5000")), 50000)
-    if tf is None:
-        return jsonify(error="تایم‌فریم نامعتبر"), 400
-    mt5.symbol_select(sym, True)
-    r = mt5.copy_rates_from_pos(sym, tf, 0, n)
-    info = mt5.symbol_info(sym)
-    if r is None or len(r) == 0 or info is None:
-        return jsonify(error=f"دیتا برای {sym} پیدا نشد"), 404
-    d, off = info.digits, offset()
-    rows = [[int(x["time"]) - off, round(float(x["open"]), d), round(float(x["high"]), d),
-             round(float(x["low"]), d), round(float(x["close"]), d)] for x in r]
+    d, rows = BE.candles(sym, request.args.get("tf", "m15"), n)
     return jsonify(digits=d, rows=rows)
 
 
 @app.get("/api/tick")
 def tick():
-    sym = request.args["symbol"]
-    mt5.symbol_select(sym, True)
-    t = mt5.symbol_info_tick(sym)
+    t = BE.tick(request.args["symbol"])
     if t is None:
         return jsonify(error="no tick"), 404
-    return jsonify(bid=t.bid, ask=t.ask, time=t.time - offset())
+    return jsonify(t)
 
 
 @app.get("/api/positions")
 def positions():
-    off = offset()
-    ps = [dict(ticket=p.ticket, symbol=p.symbol, side="B" if p.type == mt5.POSITION_TYPE_BUY else "S",
-               lots=p.volume, price=p.price_open, sl=p.sl, tp=p.tp, profit=p.profit, current=p.price_current, swap=p.swap, time=p.time - off)
-          for p in (mt5.positions_get() or [])]
-    os_ = [dict(ticket=o.ticket, symbol=o.symbol, type=PEND_BACK[o.type][0], side=PEND_BACK[o.type][1],
-                lots=o.volume_current, price=o.price_open, sl=o.sl, tp=o.tp)
-           for o in (mt5.orders_get() or []) if o.type in PEND_BACK]
-    a = mt5.account_info()
-    return jsonify(positions=ps, orders=os_, balance=a.balance, equity=a.equity, profit=a.profit, free=a.margin_free, margin=a.margin, level=a.margin_level)
-
-
-def fill_mode(sym, pending):
-    if pending:
-        return mt5.ORDER_FILLING_RETURN
-    fm = mt5.symbol_info(sym).filling_mode
-    if fm & 2:
-        return mt5.ORDER_FILLING_IOC
-    if fm & 1:
-        return mt5.ORDER_FILLING_FOK
-    return mt5.ORDER_FILLING_RETURN
+    ps, os_ = BE.positions()
+    a = BE.account()
+    if a is None:
+        return jsonify(error=f"{BE.name} آماده نیست"), 503
+    return jsonify(positions=ps, orders=os_, balance=a["balance"], equity=a["equity"], profit=a["profit"],
+                   free=a["free"], margin=a["margin"], level=a["level"])
 
 
 @app.post("/api/order")
@@ -156,35 +112,31 @@ def order():
     d = request.get_json(force=True)
     sym, side, typ = d["symbol"], d["side"], d.get("type", "mkt")
     lots, sl, tp = float(d["lots"]), float(d.get("sl") or 0), float(d.get("tp") or 0)
-    info = mt5.symbol_info(sym)
+    info = BE.symbol_info(sym)
     if info is None:
         return jsonify(error="نماد پیدا نشد"), 404
-    mt5.symbol_select(sym, True)
     if sl <= 0:
         return jsonify(error="حد ضرر (SL) الزامی است"), 400
     if lots > MAX_LOT:
         return jsonify(error=f"حجم بیشتر از سقف MAX_LOT={MAX_LOT} است"), 400
-    step = info.volume_step
+    step = info["volume_step"]
     lots = round(round(lots / step) * step, 2)
-    if lots < info.volume_min or lots > info.volume_max:
+    if lots < info["volume_min"] or lots > info["volume_max"]:
         return jsonify(error="حجم نامعتبر"), 400
-    t = mt5.symbol_info_tick(sym)
-    pend = typ != "mkt"
-    if pend:
-        if typ not in PEND:
+    t = BE.tick(sym)
+    if t is None:
+        return jsonify(error="قیمت نماد در دسترس نیست"), 503
+    if typ != "mkt":
+        if typ not in ("bl", "sl", "bs", "ss"):
             return jsonify(error="نوع سفارش نامعتبر"), 400
-        price, otype, action = float(d["price"]), PEND[typ], mt5.TRADE_ACTION_PENDING
+        price = float(d["price"])
     else:
-        otype = mt5.ORDER_TYPE_BUY if side == "B" else mt5.ORDER_TYPE_SELL
-        price, action = (t.ask if side == "B" else t.bid), mt5.TRADE_ACTION_DEAL
+        price = t["ask"] if side == "B" else t["bid"]
     if (side == "B" and sl >= price) or (side == "S" and sl <= price):
         return jsonify(error="SL در سمت اشتباه است"), 400
     if tp and ((side == "B" and tp <= price) or (side == "S" and tp >= price)):
         return jsonify(error="TP در سمت اشتباه است"), 400
-    req = dict(action=action, symbol=sym, volume=lots, type=otype, price=price, sl=sl, tp=tp, deviation=20,
-               magic=MAGIC, comment="fxapp", type_time=mt5.ORDER_TIME_GTC, type_filling=fill_mode(sym, pend))
-    with lock:
-        return done(mt5.order_send(req))
+    return jsonify(BE.order(sym, side, typ, lots, price, sl, tp))
 
 
 @app.post("/api/modify")
@@ -193,15 +145,10 @@ def modify():
     if g:
         return jsonify(error=g), 403
     d = request.get_json(force=True)
-    p = mt5.positions_get(ticket=int(d["ticket"]))
-    if not p:
-        return jsonify(error="معامله پیدا نشد"), 404
     sl, tp = float(d.get("sl") or 0), float(d.get("tp") or 0)
     if sl <= 0:
         return jsonify(error="حد ضرر (SL) الزامی است"), 400
-    req = dict(action=mt5.TRADE_ACTION_SLTP, position=p[0].ticket, symbol=p[0].symbol, sl=sl, tp=tp)
-    with lock:
-        return done(mt5.order_send(req))
+    return jsonify(BE.modify(int(d["ticket"]), sl, tp))
 
 
 @app.post("/api/close")
@@ -210,83 +157,39 @@ def close():
     if g:
         return jsonify(error=g), 403
     d = request.get_json(force=True)
-    p = mt5.positions_get(ticket=int(d["ticket"]))
-    if not p:
-        return jsonify(error="معامله پیدا نشد"), 404
-    p = p[0]
-    info = mt5.symbol_info(p.symbol)
-    vol = min(float(d.get("volume") or p.volume), p.volume)
-    vol = round(round(vol / info.volume_step) * info.volume_step, 2)
-    if vol < info.volume_min:
-        return jsonify(error="حجم نامعتبر"), 400
-    t = mt5.symbol_info_tick(p.symbol)
-    buy = p.type == mt5.POSITION_TYPE_BUY
-    req = dict(action=mt5.TRADE_ACTION_DEAL, symbol=p.symbol, volume=vol, position=p.ticket,
-               type=mt5.ORDER_TYPE_SELL if buy else mt5.ORDER_TYPE_BUY, price=t.bid if buy else t.ask,
-               deviation=20, magic=MAGIC, comment="fxapp close", type_time=mt5.ORDER_TIME_GTC,
-               type_filling=fill_mode(p.symbol, False))
-    with lock:
-        return done(mt5.order_send(req))
+    return jsonify(BE.close(int(d["ticket"]), d.get("volume")))
 
 
 @app.get("/api/symbols")
 def symbols():
     # نمادهای روشن در Market Watch
-    allv = request.args.get("all") == "1"
-    return jsonify([x.name for x in (mt5.symbols_get() or []) if allv or x.visible])
+    return jsonify(BE.symbols(request.args.get("all") == "1"))
 
 
 @app.get("/api/symbol")
 def symbol():
-    i = mt5.symbol_info(request.args["symbol"])
+    i = BE.symbol_info(request.args["symbol"])
     if i is None:
         return jsonify(error="نماد پیدا نشد"), 404
-    return jsonify(tick_value=i.trade_tick_value, tick_size=i.trade_tick_size, digits=i.digits,
-                   spread=i.spread, volume_min=i.volume_min, volume_step=i.volume_step)
+    return jsonify(tick_value=i["tick_value"], tick_size=i["tick_size"], digits=i["digits"],
+                   spread=i["spread"], volume_min=i["volume_min"], volume_step=i["volume_step"])
 
 
 @app.get("/api/watch")
 def watch():
-    out = []
-    for s in request.args.get("symbols", "").split(","):
-        if not s:
-            continue
-        mt5.symbol_select(s, True)
-        tk, i = mt5.symbol_info_tick(s), mt5.symbol_info(s)
-        if tk is None or i is None:
-            continue
-        out.append(dict(symbol=s, bid=tk.bid, ask=tk.ask, chg=getattr(i, "price_change", 0)))
-    return jsonify(out)
+    return jsonify(BE.watch([s for s in request.args.get("symbols", "").split(",") if s]))
 
 
 @app.get("/api/history")
 def history():
-    from datetime import datetime
-    t0, t1 = int(request.args["from"]), int(request.args["to"])
-    off = offset()
-    deals = mt5.history_deals_get(datetime.utcfromtimestamp(t0 - 2 * 86400), datetime.utcfromtimestamp(t1 + 2 * 86400))
-    out = []
-    for d in (deals or []):
-        ts = d.time - off
-        if ts < t0 or ts > t1 or d.type not in (mt5.DEAL_TYPE_BUY, mt5.DEAL_TYPE_SELL):
-            continue
-        out.append(dict(ticket=d.ticket, pos=d.position_id, time=ts, symbol=d.symbol,
-                        side="B" if d.type == mt5.DEAL_TYPE_BUY else "S", entry=d.entry, lots=d.volume,
-                        price=d.price, profit=d.profit, comm=d.commission, swap=d.swap, fee=getattr(d, "fee", 0)))
-    return jsonify(out)
+    return jsonify(BE.history(int(request.args["from"]), int(request.args["to"])))
 
 
 @app.get("/api/margin")
 def margin():
     sym, side, lots = request.args["symbol"], request.args.get("side", "B"), float(request.args["lots"])
-    t = mt5.symbol_info_tick(sym)
-    if t is None:
-        return jsonify(error="no tick"), 404
-    buy = side == "B"
-    m = mt5.order_calc_margin(mt5.ORDER_TYPE_BUY if buy else mt5.ORDER_TYPE_SELL, sym, lots, t.ask if buy else t.bid)
-    if m is None:
-        return jsonify(error=str(mt5.last_error())), 400
-    return jsonify(margin=m, free=mt5.account_info().margin_free)
+    m, free = BE.margin(sym, side, lots)
+    return jsonify(margin=m, free=free)
 
 
 @app.post("/api/modifyorder")
@@ -295,16 +198,10 @@ def modifyorder():
     if g:
         return jsonify(error=g), 403
     d = request.get_json(force=True)
-    o = mt5.orders_get(ticket=int(d["ticket"]))
-    if not o:
-        return jsonify(error="سفارش پیدا نشد"), 404
     sl = float(d.get("sl") or 0)
     if sl <= 0:
         return jsonify(error="حد ضرر (SL) الزامی است"), 400
-    req = dict(action=mt5.TRADE_ACTION_MODIFY, order=o[0].ticket, price=float(d["price"]), sl=sl,
-               tp=float(d.get("tp") or 0), type_time=mt5.ORDER_TIME_GTC)
-    with lock:
-        return done(mt5.order_send(req))
+    return jsonify(BE.modify_order(int(d["ticket"]), float(d["price"]), sl, float(d.get("tp") or 0)))
 
 
 @app.post("/api/cancel")
@@ -312,9 +209,7 @@ def cancel():
     g = guard()
     if g:
         return jsonify(error=g), 403
-    req = dict(action=mt5.TRADE_ACTION_REMOVE, order=int(request.get_json(force=True)["ticket"]))
-    with lock:
-        return done(mt5.order_send(req))
+    return jsonify(BE.cancel(int(request.get_json(force=True)["ticket"])))
 
 
 # ===================== اخبار، تقویم اقتصادی و تحلیل هوشمند =====================
@@ -423,17 +318,18 @@ def _atr(h, l, c, n=14):
 
 
 def snapshot(sym):
-    mt5.symbol_select(sym, True)
-    info = mt5.symbol_info(sym)
-    d = info.digits if info else 5
+    d = 5
     res = {}
-    for name, tf, n in (("D1", mt5.TIMEFRAME_D1, 260), ("H4", mt5.TIMEFRAME_H4, 200), ("H1", mt5.TIMEFRAME_H1, 120)):
-        r = mt5.copy_rates_from_pos(sym, tf, 0, n)
-        if r is None or len(r) < 40:
+    for name, tf, n in (("D1", "d1", 260), ("H4", "h4", 200), ("H1", "h1", 120)):
+        try:
+            d, rows = BE.candles(sym, tf, n)
+        except BErr:
             continue
-        c = [float(x["close"]) for x in r]
-        h = [float(x["high"]) for x in r]
-        lo = [float(x["low"]) for x in r]
+        if len(rows) < 40:
+            continue
+        c = [r[4] for r in rows]
+        h = [r[2] for r in rows]
+        lo = [r[3] for r in rows]
         res[name] = dict(
             last=round(c[-1], d), chg_pct_1bar=round((c[-1] / c[-2] - 1) * 100, 3),
             chg_pct_5bar=round((c[-1] / c[-6] - 1) * 100, 3), ema20=round(_ema(c, 20), d), ema50=round(_ema(c, 50), d),
@@ -725,8 +621,8 @@ def talerts_add():
     sym, price = d["symbol"], float(d["price"])
     ref = d.get("ref")
     if ref is None:
-        t = mt5.symbol_info_tick(sym)
-        ref = t.bid if t else price
+        t = BE.tick(sym)
+        ref = t["bid"] if t else price
     with tlock:
         TALERTS.append(dict(id=d["id"], symbol=sym, price=price, up=price >= float(ref)))
         _save("talerts.json", TALERTS)
@@ -746,9 +642,12 @@ def talerts_step():
     with tlock:
         hit = []
         for a in TALERTS:
-            t = mt5.symbol_info_tick(a["symbol"])
-            if t and ((a["up"] and t.bid >= a["price"]) or (not a["up"] and t.bid <= a["price"])):
-                hit.append((a, t.bid))
+            try:
+                t = BE.tick(a["symbol"])
+            except BErr:
+                t = None
+            if t and ((a["up"] and t["bid"] >= a["price"]) or (not a["up"] and t["bid"] <= a["price"])):
+                hit.append((a, t["bid"]))
         for a, p in hit:
             tg_send(f"🔔 <b>هشدار قیمت {a['symbol']}</b>\nقیمت به {a['price']} رسید (الان {p})")
             TALERTS.remove(a)
@@ -767,20 +666,9 @@ def glog(msg):
     del GLOG[:-40]
 
 
-def close_pos(p):
-    t = mt5.symbol_info_tick(p.symbol)
-    buy = p.type == mt5.POSITION_TYPE_BUY
-    req = dict(action=mt5.TRADE_ACTION_DEAL, symbol=p.symbol, volume=p.volume, position=p.ticket,
-               type=mt5.ORDER_TYPE_SELL if buy else mt5.ORDER_TYPE_BUY, price=t.bid if buy else t.ask,
-               deviation=30, magic=MAGIC, comment="fxapp guard", type_time=mt5.ORDER_TIME_GTC,
-               type_filling=fill_mode(p.symbol, False))
-    with lock:
-        return mt5.order_send(req)
-
-
 def guard_step(now=None):
     """هر ۱۵ ثانیه: معامله‌های باز را با خبرهای مهم نزدیک مقایسه می‌کند."""
-    if not GUARD["enabled"] or mt5.account_info() is None:
+    if not GUARD["enabled"] or BE.account() is None:
         return 0
     now = now or time.time()
     try:
@@ -790,8 +678,12 @@ def guard_step(now=None):
     imp = ("High", "Medium") if GUARD["impact"] == "Medium" else ("High",)
     evs = [e for e in cal if e["impact"] in imp]
     acted = 0
-    for p in (mt5.positions_get() or []):
-        cc = ccy_of(p.symbol)
+    try:
+        plist = BE.positions()[0]
+    except BErr:
+        return 0
+    for p in plist:
+        cc = ccy_of(p["symbol"])
         for e in sorted(evs, key=lambda x: x["ts"]):
             if e["country"] not in cc:
                 continue
@@ -800,23 +692,26 @@ def guard_step(now=None):
                 continue
             label = f"{e['country']} · {e['title']} ({iran(e['ts'])} به وقت ایران)"
             if dt > GUARD["before"] * 60 or GUARD["mode"] != "close":
-                k = (p.ticket, e["ts"], "w")
+                k = (p["ticket"], e["ts"], "w")
                 if k not in GDONE and dt > 0:
                     GDONE.add(k)
-                    glog(f"هشدار برای {p.symbol}: خبر {label}")
-                    tg_send(f"⚠️ <b>خبر مهم نزدیک است</b>\n{p.symbol} باز است\n{label}\nحدود {int(dt // 60)} دقیقه دیگر")
+                    glog(f"هشدار برای {p['symbol']}: خبر {label}")
+                    tg_send(f"⚠️ <b>خبر مهم نزدیک است</b>\n{p['symbol']} باز است\n{label}\nحدود {int(dt // 60)} دقیقه دیگر")
                 continue
             g = guard()
             if g:
-                k = (p.ticket, e["ts"], "b")
+                k = (p["ticket"], e["ts"], "b")
                 if k not in GDONE:
                     GDONE.add(k)
-                    glog(f"بستن {p.symbol} ممکن نشد: {g}")
+                    glog(f"بستن {p['symbol']} ممکن نشد: {g}")
                 break
-            r = close_pos(p)
-            ok = r is not None and r.retcode in (mt5.TRADE_RETCODE_DONE, mt5.TRADE_RETCODE_PLACED)
-            glog(f"{'بسته شد' if ok else 'بستن ناموفق'}: {p.symbol} #{p.ticket} قبل از خبر {label}")
-            tg_send(f"{'🛡 معامله بسته شد' if ok else '❗ بستن ناموفق'}\n{p.symbol} #{p.ticket}\nقبل از خبر {label}")
+            try:
+                BE.close(p["ticket"], None, True)
+                ok = True
+            except Exception:
+                ok = False
+            glog(f"{'بسته شد' if ok else 'بستن ناموفق'}: {p['symbol']} #{p['ticket']} قبل از خبر {label}")
+            tg_send(f"{'🛡 معامله بسته شد' if ok else '❗ بستن ناموفق'}\n{p['symbol']} #{p['ticket']}\nقبل از خبر {label}")
             acted += 1 if ok else 0
             break
     return acted
@@ -859,11 +754,8 @@ def background_loop():
 
 
 if __name__ == "__main__":
-    if not mt5.initialize():
-        raise SystemExit(f"اتصال به MT5 ناموفق بود: {mt5.last_error()} (برنامه MT5 باید باز و لاگین باشد)")
-    a = mt5.account_info()
-    print("حساب:", a.login, a.server, "DEMO" if a.trade_mode == mt5.ACCOUNT_TRADE_MODE_DEMO else "REAL")
+    BE.start()
     print("سقف حجم:", MAX_LOT, "| حساب واقعی مجاز:", ALLOW_REAL)
     threading.Thread(target=background_loop, daemon=True).start()
     from waitress import serve
-    serve(app, host="127.0.0.1", port=PORT)
+    serve(app, host="127.0.0.1", port=PORT, threads=16)
