@@ -159,12 +159,15 @@ class Mt5Backend:
 
     def positions(self):
         m, off = self.m, self.offset()
+        pp, oo = m.positions_get(), m.orders_get()
+        if pp is None or oo is None:
+            raise BErr("MT5 در دسترس نیست (لیست معامله‌ها خوانده نشد)", 503)
         ps = [dict(ticket=p.ticket, symbol=p.symbol, side="B" if p.type == m.POSITION_TYPE_BUY else "S",
                    lots=p.volume, price=p.price_open, sl=p.sl, tp=p.tp, profit=p.profit, current=p.price_current,
-                   swap=p.swap, time=p.time - off) for p in (m.positions_get() or [])]
+                   swap=p.swap, time=p.time - off) for p in pp]
         os_ = [dict(ticket=o.ticket, symbol=o.symbol, type=self.PEND_BACK[o.type][0], side=self.PEND_BACK[o.type][1],
                     lots=o.volume_current, price=o.price_open, sl=o.sl, tp=o.tp)
-               for o in (m.orders_get() or []) if o.type in self.PEND_BACK]
+               for o in oo if o.type in self.PEND_BACK]
         return ps, os_
 
     def symbol_info(self, sym):
@@ -266,7 +269,8 @@ class Mt5Backend:
                 continue
             out.append(dict(ticket=d.ticket, pos=d.position_id, time=ts, symbol=d.symbol,
                             side="B" if d.type == m.DEAL_TYPE_BUY else "S", entry=d.entry, lots=d.volume,
-                            price=d.price, profit=d.profit, comm=d.commission, swap=d.swap, fee=getattr(d, "fee", 0)))
+                            price=d.price, profit=d.profit, comm=d.commission, swap=d.swap, fee=getattr(d, "fee", 0),
+                            reason=getattr(d, "reason", None)))
         return out
 
     def margin(self, sym, side, lots):

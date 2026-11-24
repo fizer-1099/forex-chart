@@ -1,17 +1,14 @@
 //+------------------------------------------------------------------+
-//|  FxBridge.mq4 - اتصال MT4 به پل forex-chart (mt5_bridge.py)       |
-//|  با MT_PLATFORM=mt4 کار می‌کند. هر PollMs میلی‌ثانیه وضعیت را     |
-//|  می‌فرستد و دستورهای پل (کندل، سفارش، بستن، ...) را اجرا می‌کند.  |
 //+------------------------------------------------------------------+
 #property copyright "forex-chart"
 #property version   "1.00"
 #property strict
 
-input string BridgeUrl   = "http://127.0.0.1:8787"; // آدرس پل (باید در Options مجاز شود)
-input string BridgeToken = "";                      // همان BRIDGE_TOKEN داخل run.bat
-input int    PollMs      = 250;                     // فاصله اتصال به پل (میلی‌ثانیه)
-input int    Slippage    = 20;                      // لغزش مجاز (points)
-input int    MagicNumber = 777;                     // مجیک معامله‌های اپ
+input string BridgeUrl   = "http://127.0.0.1";     // Bridge URL (must be allowed in Tools>Options>Expert Advisors)
+input string BridgeToken = "";                      // Same value as BRIDGE_TOKEN in run.bat (min 24 chars)
+input int    PollMs      = 250;                     // Poll interval (ms)
+input int    Slippage    = 20;                      // Max slippage (points)
+input int    MagicNumber = 777;                     // Magic number for app trades
 
 string   g_want[];
 int      g_wantN   = 0;
@@ -20,13 +17,16 @@ bool     g_busy    = false;
 datetime g_lastOk  = 0;
 datetime g_lastErr = 0;
 int      g_fails   = 0;
+int      g_lastE   = 0;
+bool     g_useAlt  = false;
+string   g_lastUrl = "";
 
 //+------------------------------------------------------------------+
 int OnInit()
   {
    if(StringLen(BridgeToken) < 24)
      {
-      Alert("FxBridge: BridgeToken را (حداقل ۲۴ کاراکتر، همان BRIDGE_TOKEN) وارد کنید");
+      Alert("FxBridge: set BridgeToken in Inputs tab (same as BRIDGE_TOKEN in run.bat, min 24 chars)");
       return(INIT_PARAMETERS_INCORRECT);
      }
    EventSetMillisecondTimer(MathMax(100, PollMs));
@@ -59,37 +59,75 @@ void OnTimer()
    else
      {
       g_fails++;
-      Comment("FxBridge: NOT connected to bridge (code ", code, "). Check bridge is running + WebRequest URL allowed.");
+      string why = "";
+      if(code == -1 && g_lastE == 4060)
+         why = "URL NOT ALLOWED: add " + BridgeUrl + " in Tools>Options>Expert Advisors, press OK, then remove and re-attach this EA";
+      else if(code == -1 && (g_lastE == 5200 || g_lastE == 5201))
+         why = "invalid URL [" + g_lastUrl + "] - MT4 accepts only port 80/443: use BridgeUrl=http://127.0.0.1 and run the bridge with EA_PORT=80";
+      else if(code == -1)
+         why = "cannot reach the bridge (run.bat not running? wrong port? firewall?)";
+      else if(code == 401)
+         why = "WRONG TOKEN: BridgeToken must equal BRIDGE_TOKEN in run.bat";
+      else
+         why = "bridge answered with HTTP " + IntegerToString(code);
+      Comment("FxBridge: NOT connected | code ", code, " | MT4 error ", g_lastE, "\n", why);
      }
    g_busy = false;
   }
 //+------------------------------------------------------------------+
 //| HTTP                                                             |
 //+------------------------------------------------------------------+
-int Post(string path, string body, string &resp, int timeout)
+string BaseUrl()
+  {
+   string u = BridgeUrl;
+   StringTrimLeft(u);
+   StringTrimRight(u);
+   while(StringLen(u) > 0 && StringGetCharacter(u, StringLen(u) - 1) == '/')
+      u = StringSubstr(u, 0, StringLen(u) - 1);
+   if(g_useAlt)
+      StringReplace(u, "127.0.0.1", "localhost");
+   return(u);
+  }
+//+------------------------------------------------------------------+
+int PostOnce(string url, string body, string &resp, int timeout)
   {
    char data[], res[];
    string rh;
    string headers = "Content-Type: text/plain; charset=utf-8\r\nX-Token: " + BridgeToken + "\r\n";
-   if(StringLen(body) == 0)
-      body = " ";
    StringToCharArray(body, data, 0, StringLen(body), CP_UTF8);
    ResetLastError();
-   int code = WebRequest("POST", BridgeUrl + path, headers, timeout, data, res, rh);
+   int code = WebRequest("POST", url, headers, timeout, data, res, rh);
    if(code == -1)
      {
-      int e = GetLastError();
-      if(TimeLocal() - g_lastErr >= 30)
-        {
-         g_lastErr = TimeLocal();
-         if(e == 4060)
-            Print("FxBridge: آدرس مجاز نیست. Tools > Options > Expert Advisors > Allow WebRequest for listed URL و این آدرس را اضافه کنید: ", BridgeUrl);
-         else
-            Print("FxBridge: اتصال به پل ناموفق بود (خطا ", e, ") - آیا mt5_bridge.py اجرا است؟ ", BridgeUrl);
-        }
+      g_lastE = GetLastError();
       return(-1);
      }
    resp = CharArrayToString(res, 0, WHOLE_ARRAY, CP_UTF8);
+   return(code);
+  }
+//+------------------------------------------------------------------+
+int Post(string path, string body, string &resp, int timeout)
+  {
+   if(StringLen(body) == 0)
+      body = " ";
+   g_lastUrl = BaseUrl() + path;
+   int code = PostOnce(g_lastUrl, body, resp, timeout);
+   if(code == -1 && g_lastE == 5200)
+     {
+      g_useAlt = !g_useAlt;          // try the other spelling (127.0.0.1 <-> localhost)
+      g_lastUrl = BaseUrl() + path;
+      code = PostOnce(g_lastUrl, body, resp, timeout);
+      if(code == -1 && g_lastE == 5200)
+         g_useAlt = !g_useAlt;
+     }
+   if(code == -1 && TimeLocal() - g_lastErr >= 30)
+     {
+      g_lastErr = TimeLocal();
+      if(g_lastE == 4060)
+         Print("FxBridge: URL not allowed. Add it in Tools > Options > Expert Advisors > Allow WebRequest for listed URL: ", g_lastUrl);
+      else
+         Print("FxBridge: WebRequest failed, MT4 error ", g_lastE, " url=[", g_lastUrl, "] len=", StringLen(g_lastUrl));
+     }
    return(code);
   }
 //+------------------------------------------------------------------+
@@ -115,7 +153,6 @@ void ReplyErr(string id, int code, string msg = "")
    PostResult(id, true, "ERR|" + IntegerToString(code) + "|" + msg);
   }
 //+------------------------------------------------------------------+
-//| وضعیت حساب، پوزیشن‌ها، سفارش‌ها و قیمت‌ها (JSON)                  |
 //+------------------------------------------------------------------+
 string Esc(string s)
   {
@@ -197,7 +234,6 @@ string BuildState()
    return(s);
   }
 //+------------------------------------------------------------------+
-//| پردازش پاسخ پل: W|نمادها   و   C|id|دستور|آرگومان‌ها               |
 //+------------------------------------------------------------------+
 void Process(string resp)
   {
@@ -242,7 +278,6 @@ void Process(string resp)
 //+------------------------------------------------------------------+
 void Exec(string id, string cmd, string &p[], int k)
   {
-   // p[0]="C" p[1]=id p[2]=دستور p[3...]=آرگومان‌ها
    if(cmd == "rates" && k >= 6)
       CmdRates(id, p[3], (int)StringToInteger(p[4]), (int)StringToInteger(p[5]));
    else if(cmd == "order" && k >= 9)
@@ -267,7 +302,6 @@ void Exec(string id, string cmd, string &p[], int k)
       ReplyErr(id, 3, "unknown command " + cmd);
   }
 //+------------------------------------------------------------------+
-//| کندل‌ها: قدیمی‌ترین اول، هر ۲۰۰۰ ردیف در یک بسته                    |
 //+------------------------------------------------------------------+
 void CmdRates(string id, string sym, int tfmin, int n)
   {
@@ -279,13 +313,13 @@ void CmdRates(string id, string sym, int tfmin, int n)
    int bars = iBars(sym, tfmin);
    if(bars <= 0)
      {
-      iTime(sym, tfmin, 0);   // لود تاریخچه را شروع می‌کند
+      iTime(sym, tfmin, 0);
       Sleep(500);
       bars = iBars(sym, tfmin);
      }
    if(bars <= 0)
      {
-      ReplyErr(id, 4066, "no history for " + sym);   // 4066 = داده در حال دریافت است
+      ReplyErr(id, 4066, "no history for " + sym);
       return;
      }
    if(n > bars)
@@ -311,7 +345,6 @@ void CmdRates(string id, string sym, int tfmin, int n)
    PostResult(id, true, buf);
   }
 //+------------------------------------------------------------------+
-//| سفارش: type = 0 خرید، 1 فروش، 2 بای‌لیمیت، 3 سل‌لیمیت، 4 بای‌استاپ، 5 سل‌استاپ |
 //+------------------------------------------------------------------+
 void CmdOrder(string id, string sym, int type, double lots, double price, double sl, double tp)
   {
@@ -344,7 +377,6 @@ void CmdOrder(string id, string sym, int type, double lots, double price, double
       break;
      }
 
-   // بعضی بروکرها (ECN) اجازه نمی‌دهند SL/TP همزمان با باز شدن بیاید: اول باز می‌کنیم بعد SL/TP می‌گذاریم
    if(ticket < 0 && err == 130 && type <= OP_SELL && (sl > 0 || tp > 0))
      {
       double pt = MarketInfo(sym, MODE_POINT);
@@ -362,7 +394,6 @@ void CmdOrder(string id, string sym, int type, double lots, double price, double
             if(!ok)
               {
                int me = GetLastError();
-               // بدون SL نباید باز بماند: فوراً می‌بندیم
                double cpx = (type == OP_BUY) ? MarketInfo(sym, MODE_BID) : MarketInfo(sym, MODE_ASK);
                OrderClose(ticket, lots, NormalizeDouble(cpx, dg), Slippage, clrNONE);
                ReplyErr(id, me, "SL could not be set after open; position was closed");
@@ -382,7 +413,6 @@ void CmdOrder(string id, string sym, int type, double lots, double price, double
    ReplyOk(id, IntegerToString(ticket));
   }
 //+------------------------------------------------------------------+
-//| ویرایش SL/TP پوزیشن (isPending=false) یا قیمت/SL/TP سفارش          |
 //+------------------------------------------------------------------+
 void CmdModify(string id, int ticket, double price, double sl, double tp, bool isPending)
   {
@@ -397,7 +427,7 @@ void CmdModify(string id, int ticket, double price, double sl, double tp, bool i
    bool ok = OrderModify(ticket, NormalizeDouble(op, dg), NormalizeDouble(sl, dg), NormalizeDouble(tp, dg),
                          OrderExpiration(), clrNONE);
    int e = GetLastError();
-   if(!ok && e != 1)     // 1 = چیزی تغییر نکرده؛ خطا نیست
+   if(!ok && e != 1)
      {
       ReplyErr(id, e, "OrderModify failed");
       return;
@@ -478,7 +508,6 @@ void CmdSymInfo(string id, string sym)
    ReplyOk(id, s);
   }
 //+------------------------------------------------------------------+
-//| تاریخچه معامله‌های بسته (تب Account History باید روی All History باشد) |
 //+------------------------------------------------------------------+
 void CmdHistory(string id, datetime t0, datetime t1)
   {

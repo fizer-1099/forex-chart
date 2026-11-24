@@ -689,7 +689,7 @@ new MutationObserver(oscLayout).observe($('oscs'),{childList:true});
 })();
 const SB=document.createElement('div');SB.id='srcb';SB.style.cssText='position:absolute;top:3px;left:6px;z-index:4;pointer-events:none;font-size:10px;padding:2px 7px;border-radius:6px;color:#fff;direction:rtl;max-width:92%';$('chart').appendChild(SB);
 function badge(){const last=D.length?D[D.length-1]:null,real=SRCL!=='Sample';SB.style.background=real?'#16a34a':'#d97706';
-  SB.textContent=(real?'✓ '+SRCL:'⚠ دیتای نمونه (غیرواقعی)'+(DERR?' — '+DERR:''))+(last?' · آخرین '+last.close.toFixed(DEC)+' @ '+fmtT(last.time)+(tzOff()?'':'Z'):'')+' · v23'}
+  SB.textContent=(real?'✓ '+SRCL:'⚠ دیتای نمونه (غیرواقعی)'+(DERR?' — '+DERR:''))+(last?' · آخرین '+last.close.toFixed(DEC)+' @ '+fmtT(last.time)+(tzOff()?'':'Z'):'')+' · v24'}
 
 // انتخاب خودکار دیتای پایه بر اساس تایم‌فریم
 let CURTF=null;
@@ -770,6 +770,7 @@ function sltLoop(){
     if((rp.on||MT5.ok)!==SLT.ron){SLT.ron=rp.on||MT5.ok;if(SLT.ron&&!subj())mkDraft();buildTrade()}
     if($('tsp')){const v=lastPx().toFixed(DEC),lv=MT5.ok&&!rp.on&&MT5.tick;$('tsp').textContent=v;if($('tbp'))$('tbp').textContent=lv?MT5.tick.ask.toFixed(DEC):v}
     if($('tplay'))$('tplay').textContent=$('rplay').textContent;
+    if(ARISK&&DRAFT&&DRAFT.sl!=null&&$('trk'))autoLot(true);
     if($('trr')&&DRAFT&&DRAFT.sl!=null){const slp=Math.abs(DRAFT.entry-DRAFT.sl)/PIP,rk=slp*PV*DRAFT.lots,rw=DRAFT.tp!=null?Math.abs(DRAFT.tp-DRAFT.entry)/PIP*PV*DRAFT.lots:0;$('trr').textContent='ریسک '+rk.toFixed(2)+'$'+(rw?' · ریوارد '+rw.toFixed(2)+'$ · R:R '+(rw/rk).toFixed(1):'')}
     if(Date.now()>MSGT&&$('tst'))$('tst').textContent=(MT5.ok&&!rp.on&&MT5.acc)?((MT5.acc.demo?'DEMO':'REAL')+' · '+(+MT5.acc.equity).toFixed(2)+' · P/L '+(+MT5.acc.profit).toFixed(2)+(MT5.tick?' · sp '+((MT5.tick.ask-MT5.tick.bid)/PIP).toFixed(1):'')):$('rst').textContent.split(' · ').slice(0,2).join(' · ');
   }
@@ -843,23 +844,23 @@ function buildTrade(){
   else if(!DRAFT)h+='<div class="row"><button id="tnew" style="flex:1">+ سفارش جدید</button></div>';
   else{
     h+=`<div class="row" style="flex-wrap:nowrap"><button class="sb" id="tsell" style="background:#dc2626">SELL<br><span id="tsp"></span></button><div class="row" style="flex:1;justify-content:center;flex-wrap:nowrap"><button id="tlm">−</button><input id="tlot" type="number" step="0.01" value="${DRAFT.lots}" style="width:60px;text-align:center"><button id="tlp">+</button></div><button class="sb" id="tbuy" style="background:#2563eb">BUY<br><span id="tbp"></span></button></div>`;
-    h+=(DRAFT.pending?'':'<div class="row" id="tsd"><span class="mut">جهت معامله:</span><button data-sd="B">BUY</button><button data-sd="S">SELL</button></div>');h+='<div class="row"><button class="circ" id="ttp" style="border-color:#16a34a;color:#16a34a">TP</button><button class="circ" id="tsl" style="border-color:#dc2626;color:#dc2626">SL</button></div><div class="row"><span class="mut">ریسک٪</span><input id="trk" type="number" step="0.1" value="'+$('rkp').value+'" style="width:60px"><button id="tauto">لات از ریسک</button></div><div id="trr" class="mut" style="font-size:11px"></div>';
+    h+=(DRAFT.pending?'':'<div class="row" id="tsd"><span class="mut">جهت معامله:</span><button data-sd="B">BUY</button><button data-sd="S">SELL</button></div>');h+='<div class="row"><button class="circ" id="ttp" style="border-color:#16a34a;color:#16a34a">TP</button><button class="circ" id="tsl" style="border-color:#dc2626;color:#dc2626">SL</button></div><div class="row"><span class="mut">ریسک٪</span><input id="trk" type="number" step="0.1" value="'+$('rkp').value+'" style="width:60px"><label class="mut" style="display:flex;align-items:center;gap:3px"><input type="checkbox" id="tar"'+(ARISK?' checked':'')+'>خودکار</label><button id="tauto">لات از ریسک</button></div><div id="trr" class="mut" style="font-size:11px"></div>';
     h+='<div class="row" style="flex-wrap:nowrap;overflow-x:auto">'+Object.keys(OT).map(k=>`<button data-o="${k}" class="${k===tOT?'on':''}">${OT[k][0]}</button>`).join('')+'</div>';
   }
   h+='<div id="tpl"></div>';t.innerHTML=h;
   $('tcl').onclick=closeTrade;$('tfull').onclick=openTP;$('tplay').onclick=()=>$('rplay').click();$('tstep').onclick=()=>$('rstep').click();
   if($('tcp'))$('tcp').onclick=()=>{if(lpos())liveClose();else{closePos(base[rp.i].close,'MAN');status()}buildTrade()};
-  if($('trf')){$('trf').onclick=riskFree;$('thf').onclick=halfClose;$('ttr').onclick=toggleTrail;$('tca').onclick=closeAll;$('ttr').textContent='تریلینگ: '+(TRAIL?'روشن':'خاموش')}
+  if($('trf')){$('trf').onclick=riskFree;$('thf').onclick=halfClose;$('ttr').onclick=toggleTrail;$('tca').onclick=closeAll;trLabels()}
   if($('tnew'))$('tnew').onclick=()=>{mkDraft();buildTrade()};
   if(DRAFT&&$('tlot')){
     const D0=DRAFT;
-    $('tlot').oninput=()=>{D0.lots=Math.max(.01,+$('tlot').value||.01);$('lot').value=D0.lots};
-    $('tlm').onclick=()=>{D0.lots=Math.max(.01,+(D0.lots-(D0.lots>1?.1:.01)).toFixed(2));$('tlot').value=D0.lots;$('lot').value=D0.lots};
-    $('tlp').onclick=()=>{D0.lots=+(D0.lots+(D0.lots>=1?.1:.01)).toFixed(2);$('tlot').value=D0.lots;$('lot').value=D0.lots};
+    $('tlot').oninput=()=>{setAR(false);D0.lots=Math.max(.01,+$('tlot').value||.01);$('lot').value=D0.lots};
+    $('tlm').onclick=()=>{setAR(false);D0.lots=Math.max(.01,+(D0.lots-(D0.lots>1?.1:.01)).toFixed(2));$('tlot').value=D0.lots;$('lot').value=D0.lots};
+    $('tlp').onclick=()=>{setAR(false);D0.lots=+(D0.lots+(D0.lots>=1?.1:.01)).toFixed(2);$('tlot').value=D0.lots;$('lot').value=D0.lots};
     $('ttp').onclick=()=>{const dir=D0.side==='B'?1:-1;D0.tp=D0.tp==null?D0.entry+dir*(+$('tpp').value||40)*PIP:null;tglStyle()};
     $('tsl').onclick=()=>{const dir=D0.side==='B'?1:-1;D0.sl=D0.sl==null?D0.entry-dir*(+$('slp').value||20)*PIP:null;tglStyle()};
     document.querySelectorAll('[data-o]').forEach(b=>b.onclick=()=>{tOT=b.dataset.o;mkDraft();buildTrade()});
-    $('tauto').onclick=autoLot;
+    $('tauto').onclick=()=>autoLot();$('tar').onchange=()=>{ARISK=$('tar').checked;try{localStorage.setItem('fx_arisk',ARISK?'1':'0')}catch(e){}if(ARISK)autoLot(true)};
     document.querySelectorAll('[data-sd]').forEach(b=>{const on=()=>document.querySelectorAll('[data-sd]').forEach(x=>x.className=x.dataset.sd===D0.side?'on':'');on();b.onclick=()=>{const ns=b.dataset.sd;if(D0.side!==ns){const e=D0.entry;if(D0.sl!=null)D0.sl=2*e-D0.sl;if(D0.tp!=null)D0.tp=2*e-D0.tp;D0.side=ns;tSide=ns;on()}}});
     if(D0.pending){$('tsell').style.display='none';$('tbuy').textContent='ثبت '+OTN[D0.type];$('tbuy').style.background=D0.side==='B'?'#2563eb':'#dc2626';$('tbuy').onclick=placePending}
     else{$('tsell').onclick=()=>placeMarket('S');$('tbuy').onclick=()=>placeMarket('B')}
@@ -975,7 +976,7 @@ function startMtPoll(){
     try{
       MT5.tick=await mt('/api/tick?symbol='+encodeURIComponent(MT5S(SYM)));(MT5.ticks=MT5.ticks||[]).push(MT5.tick.bid);if(MT5.ticks.length>150)MT5.ticks.shift();
       if(!rp.on&&D.length&&LIVEMODE())applyTick(MT5.tick.bid);baLines();if(LPOS)trailTick(LPOS.side==='B'?MT5.tick.bid:MT5.tick.ask);
-      if(n++%2===0){const p=await mt('/api/positions');MT5.pos=p.positions;MT5.orders=p.orders;Object.assign(MT5.acc,{balance:p.balance,equity:p.equity,profit:p.profit,free:p.free,margin:p.margin,level:p.level});syncLpos()}
+      if(n++%2===0){const p=await mt('/api/positions');MT5.pos=p.positions;MT5.orders=p.orders;MT5.trails=p.trails||[];Object.assign(MT5.acc,{balance:p.balance,equity:p.equity,profit:p.profit,free:p.free,margin:p.margin,level:p.level});syncLpos()}
     }catch(e){}
   },1500);
 }
@@ -985,6 +986,7 @@ function syncLpos(){
   else if(!LPOS||LPOS.ticket!==lp.ticket)LPOS={live:true,ticket:lp.ticket,side:lp.side,entry:lp.price,sl:lp.sl||null,tp:lp.tp||null,lots:lp.lots,_s:lp.sl,_t:lp.tp};
   else{if(lp.sl!==LPOS._s){LPOS._s=lp.sl;LPOS.sl=lp.sl||null}if(lp.tp!==LPOS._t){LPOS._t=lp.tp;LPOS.tp=lp.tp||null}}
   updChip();if(LPOS&&lp)LPOS.profit=lp.profit;
+  if(!rp.on){const t0=TRAIL;TRAIL=!!(LPOS&&(MT5.trails||[]).some(t=>t.ticket===LPOS.ticket));if(t0!==TRAIL)trLabels()}
   const sig=MT5.pos.map(x=>x.ticket+':'+x.sl+':'+x.tp).join()+'|'+MT5.orders.map(o=>o.ticket+':'+o.price).join();
   if(sig!==MTSIG){MTSIG=sig;drawPend();if($('trd').style.display==='block')buildTrade()}
 }
@@ -1020,7 +1022,7 @@ function openMT5(){
 }
 
 // ===== امکانات تکمیلی: ساعت، نوع نمودار، خط‌کش، ریسک، مدیریت معامله، لیست قیمت، پشتیبان، ژورنال، هشدار =====
-let PV=10,TRAIL=false,TRDIST=0,BLn=null,ALn=null;
+let PV=10,TRAIL=false,TRDIST=0,BLn=null,ALn=null,SYMI=null,ARISK=(()=>{try{return localStorage.getItem('fx_arisk')!=='0'}catch(e){return true}})();
 const p2=n=>String(n).padStart(2,'0'),MONN=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 const tzOff=()=>SET.tz==='tehran'?12600:SET.tz==='local'?-new Date().getTimezoneOffset()*60:SET.tz==='broker'?Math.round((+SET.tzh||0)*3600):0;
 function fmtT(t){const d=new Date((t+tzOff())*1000);return d.getUTCFullYear()+'-'+p2(d.getUTCMonth()+1)+'-'+p2(d.getUTCDate())+' '+p2(d.getUTCHours())+':'+p2(d.getUTCMinutes())}
@@ -1043,7 +1045,7 @@ function applyCT(){
 function updLast(){const l=D[D.length-1];if(!l)return;const ct=ctOf();
   if(ct==='heikin')candles.setData(haData(D));else candles.update(l);
   if(ct==='line')lineS.update({time:l.time,value:l.close});if(ct==='area')areaS.update({time:l.time,value:l.close})}
-function updPV(){PV=10;if(MT5.ok)mt('/api/symbol?symbol='+encodeURIComponent(MT5S(SYM))).then(j=>{if(j.tick_size>0&&j.tick_value>0)PV=j.tick_value*PIP/j.tick_size}).catch(()=>{})}
+function updPV(){PV=10;SYMI=null;if(MT5.ok)mt('/api/symbol?symbol='+encodeURIComponent(MT5S(SYM))).then(j=>{if(j.tick_size>0&&j.tick_value>0)PV=j.tick_value*PIP/j.tick_size;SYMI={vmin:+j.volume_min||.01,vstep:+j.volume_step||.01,vmax:+j.volume_max||100}}).catch(()=>{})}
 // تمام‌صفحه
 function toggleFS(){
   const on=document.body.classList.toggle('fs');let b=$('fsb');
@@ -1063,10 +1065,19 @@ async function closeAll(){
   if(!rp.on&&MT5.ok){if(!confirm('همه معامله‌ها بسته و سفارش‌های پندینگ لغو شوند؟'))return;try{for(const x of MT5.pos)await mt('/api/close',{ticket:x.ticket});for(const o of MT5.orders)await mt('/api/cancel',{ticket:o.ticket});MTSIG='';flash('همه بسته شد')}catch(e){flash(e.message)}}
   else{if(rp.pos)closePos(base[rp.i].close,'ALL');PEND=[];drawPend();status();buildTrade()}
 }
-function toggleTrail(){const p=curPos();if(!p||!p.sl){msg('اول SL داشته باشید');return}TRAIL=!TRAIL;TRDIST=Math.max(Math.abs(p.entry-p.sl),(+$('slp').value||20)*PIP);const e0=$('ttr');if(e0)e0.textContent='تریلینگ: '+(TRAIL?'روشن':'خاموش');pbUpdate()}
+function trLabels(){const t='تریلینگ: '+(TRAIL?(lpos()?'سرور ✓':'روشن'):'خاموش');['ttr','pb_tr'].forEach(id=>{const e=document.getElementById(id);if(e)e.textContent=t})}
+async function toggleTrail(){const p=curPos();if(!p||!p.sl){msg('اول SL داشته باشید');return}
+  if(p.live){
+    const on=(MT5.trails||[]).some(t=>t.ticket===p.ticket);
+    try{
+      if(on){await mt('/api/trail/delete',{ticket:p.ticket});MT5.trails=(MT5.trails||[]).filter(t=>t.ticket!==p.ticket);TRAIL=false;flash('تریلینگ روی سرور خاموش شد')}
+      else{const dist=Math.max(Math.abs(p.entry-p.sl),(+$('slp').value||20)*PIP);await mt('/api/trail',{ticket:p.ticket,dist,step:PIP});(MT5.trails=MT5.trails||[]).push({ticket:p.ticket,dist});TRAIL=true;TRDIST=dist;flash('تریلینگ روی سرور روشن شد؛ با بسته بودن اپ هم کار می‌کند')}
+    }catch(e){msg('خطا: '+e.message)}
+    trLabels();pbUpdate();return}
+  TRAIL=!TRAIL;TRDIST=Math.max(Math.abs(p.entry-p.sl),(+$('slp').value||20)*PIP);const e0=$('ttr');if(e0)e0.textContent='تریلینگ: '+(TRAIL?'روشن':'خاموش');pbUpdate()}
 let TRB=false;
 function trailTick(price){
-  const p=curPos();if(!TRAIL||!p||!p.sl||TRB)return;const d=p.side==='B'?1:-1,ns=price-d*TRDIST;
+  const p=curPos();if(!TRAIL||!p||!p.sl||TRB||p.live)return;const d=p.side==='B'?1:-1,ns=price-d*TRDIST;
   if((ns-p.sl)*d>PIP){p.sl=ns;if(p.live){TRB=true;liveModify().finally(()=>TRB=false)}}
 }
 function baLines(){
@@ -1076,12 +1087,20 @@ function baLines(){
   else{BLn.applyOptions({price:MT5.tick.bid});ALn.applyOptions({price:MT5.tick.ask})}
 }
 // لات از ریسک
-function autoLot(){
-  const d=DRAFT;if(!d)return;if(d.sl==null){msg('اول SL را فعال کنید');return}
-  const slp=Math.abs(d.entry-d.sl)/PIP,r=+$('trk').value||1;
-  const eq=(!rp.on&&MT5.ok&&MT5.acc)?+MT5.acc.equity:bal0()+trades.reduce((s,t)=>s+t.pnl,0);
-  d.lots=Math.max(.01,+(eq*r/100/(slp*PV)).toFixed(2));$('tlot').value=d.lots;$('lot').value=d.lots;
+function riskLots(d){
+  const slp=Math.abs(d.entry-d.sl)/PIP;if(!(slp>0)||!(PV>0))return null;
+  const r=+$('trk').value||1,live=!rp.on&&MT5.ok&&MT5.acc;
+  const eq=live?+MT5.acc.equity:bal0()+trades.reduce((s,t)=>s+t.pnl,0);
+  let l=eq*r/100/(slp*PV);
+  if(live&&SYMI){const st=SYMI.vstep||.01;l=Math.floor(l/st+1e-9)*st;l=Math.max(l,SYMI.vmin);l=Math.min(l,SYMI.vmax||1e9,+MT5.acc.max_lot||1e9);return +l.toFixed(st<.01?3:2)}
+  return Math.max(.01,+l.toFixed(2));
 }
+function autoLot(quiet){
+  const d=DRAFT;if(!d)return;if(d.sl==null){if(!quiet)msg('اول SL را فعال کنید');return}
+  const l=riskLots(d);if(l==null||l===d.lots)return;
+  d.lots=l;if($('tlot'))$('tlot').value=l;$('lot').value=l;
+}
+function setAR(v){ARISK=v;const c=$('tar');if(c)c.checked=v}
 // لیست قیمت‌ها
 let WT_OLD=null;
 function openWatch_old(){
@@ -1661,7 +1680,7 @@ function pbUpdate(){
   pbar.style.display='block';
   const n=MT5.ok&&!rp.on?MT5.pos.filter(x=>x.symbol===MT5S(SYM)).length:1,v=pbPL(p),t=$('pbt');
   t.textContent=(p.side==='B'?'BUY ':'SELL ')+(+p.lots).toFixed(2)+' '+SYM+(n>1?' (+'+(n-1)+')':'')+'   '+(v>=0?'+':'')+v.toFixed(2)+'$';t.style.color=v>=0?'#16a34a':'#dc2626';
-  $('pb_tr').textContent='تریلینگ: '+(TRAIL?'روشن':'خاموش');
+  trLabels();
 }
 setInterval(pbUpdate,500);
 // پوزیشن‌های باز در صفحه معامله
@@ -1704,6 +1723,7 @@ async function openTG(){
   dl.innerHTML=`<div class="row" style="justify-content:space-between"><button id="dcl">←</button><b>ربات تلگرام</b></div>
 <p class="mut" style="font-size:12px;line-height:1.9">هشدارهای قیمت و اعلان‌های محافظ اخبار به تلگرام (چت شخصی، گروه یا کانال) فرستاده می‌شود، حتی وقتی اپ بسته است. توکن فقط روی VPS ذخیره می‌شود.</p>
 <label class="row"><span class="mut" style="flex:1">هشدارهای قیمت به تلگرام هم برود</span><input type="checkbox" id="t_on"${SET.tg_on?' checked':''}></label>
+<label class="row"><span class="mut" style="flex:1">اعلان وقتی معامله به TP یا SL رسید</span><input type="checkbox" id="t_nc"${c.notify_close!==false?' checked':''}${MT5.ok?'':' disabled'}></label>
 <label class="row"><span class="mut" style="flex:1">توکن ربات</span><input id="t_tok" type="password" dir="ltr" style="width:100%" placeholder="${c.has_token?'ذخیره شده (…'+c.token_tail+') ؛ برای تغییر بنویسید':'123456:ABC...'}"></label>
 <label class="row"><span class="mut" style="flex:1">شناسه چت یا کانال</span><input id="t_cid" dir="ltr" style="width:100%" value="${c.chat_id||''}" placeholder="@mt42050 یا -100123456789"></label>
 <div class="row"><button id="t_save">ذخیره روی VPS</button><button id="t_test">ارسال پیام آزمایشی</button><button id="t_id">یافتن Chat ID</button></div><div id="t_st" class="mut" style="font-size:12px;line-height:1.9;margin:8px 0"></div>
@@ -1712,6 +1732,7 @@ async function openTG(){
   dl.style.display='block';$('dcl').onclick=()=>dl.style.display='none';
   const st=t=>$q('t_st').textContent=t;
   $('t_on').onchange=()=>{SET.tg_on=$('t_on').checked?1:0;saveSET()};
+  $('t_nc').onchange=()=>mtPost('/api/tgconfig',{notify_close:$('t_nc').checked},10000).catch(e=>st('✗ '+e.message));
   $('t_save').onclick=async()=>{if(!MT5.ok){st('ذخیره روی VPS به اتصال MT4/MT5 نیاز دارد (برای Render از Environment استفاده کنید)');return}st('در حال ذخیره...');try{const j=await mtPost('/api/tgconfig',{token:$('t_tok').value.trim(),chat_id:$('t_cid').value.trim()},10000);$('t_cid').value=j.chat_id;$('t_tok').value='';if(MT5.acc)MT5.acc.tg=!!(j.has_token&&j.chat_id);st('✓ ذخیره شد؛ «ارسال پیام آزمایشی» را بزنید')}catch(e){st('✗ '+e.message)}};
   $('t_test').onclick=async()=>{st('در حال ارسال...');try{if(MT5.ok)await mtPost('/api/telegram/test',{},20000);else if(SRV)await srvPost('/api/telegram/test',{},20000);else throw new Error('به MT5 یا سرور Render وصل نیستید');st('✓ پیام آزمایشی ارسال شد؛ تلگرام را ببینید')}catch(e){st('✗ '+e.message)}};
   $('t_id').onclick=async()=>{if(!MT5.ok){st('این بخش به اتصال MT4/MT5 نیاز دارد');return}st('در حال جستجو...');try{const a=await mtTO('/api/telegram/chatid',15000);st(a.length?'Chat ID: '+a.map(x=>x.id+(x.name?' ('+x.name+')':'')).join(' ، '):'چیزی پیدا نشد؛ اول به ربات (یا در کانال) پیام بدهید')}catch(e){st('✗ '+e.message)}};

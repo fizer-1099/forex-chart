@@ -17,6 +17,7 @@ MAX_LOT = float(os.environ.get("MAX_LOT", "0.1"))
 ALLOW_REAL = os.environ.get("ALLOW_REAL", "0") == "1"
 UTC_OFFSET_H = os.environ.get("MT5_UTC_OFFSET")  # اختلاف ساعت سرور بروکر با UTC (ساعت)
 PORT = int(os.environ.get("BRIDGE_PORT", "8787"))
+EA_PORT = int(os.environ.get("EA_PORT", "80"))  # پورت مخصوص اکسپرت MT4 (MT4 فقط پورت 80/443 را در WebRequest می‌پذیرد)
 PLATFORM = os.environ.get("MT_PLATFORM", "both").strip().lower()  # mt5 | mt4 | both
 if len(TOKEN) < 24:
     raise SystemExit("BRIDGE_TOKEN باید حداقل ۲۴ کاراکتر باشد")
@@ -146,8 +147,10 @@ def positions():
     a = BE.account()
     if a is None:
         return jsonify(error=f"{BE.name} آماده نیست"), 503
+    pf = BE.name.lower()
     return jsonify(positions=ps, orders=os_, balance=a["balance"], equity=a["equity"], profit=a["profit"],
-                   free=a["free"], margin=a["margin"], level=a["level"])
+                   free=a["free"], margin=a["margin"], level=a["level"],
+                   trails=[dict(ticket=t["ticket"], dist=t["dist"]) for t in TRAILS if t["pf"] == pf])
 
 
 @app.post("/api/order")
@@ -203,7 +206,13 @@ def close():
     if g:
         return jsonify(error=g), 403
     d = request.get_json(force=True)
-    return jsonify(BE.close(int(d["ticket"]), d.get("volume")))
+    k = (BE.name.lower(), int(d["ticket"]))
+    IGNORE[k] = time.time()  # بستن عمدی از اپ؛ اعلان TP/SL نمی‌خواهد
+    try:
+        return jsonify(BE.close(int(d["ticket"]), d.get("volume")))
+    except Exception:
+        IGNORE.pop(k, None)
+        raise
 
 
 @app.get("/api/symbols")
@@ -218,7 +227,8 @@ def symbol():
     if i is None:
         return jsonify(error="نماد پیدا نشد"), 404
     return jsonify(tick_value=i["tick_value"], tick_size=i["tick_size"], digits=i["digits"],
-                   spread=i["spread"], volume_min=i["volume_min"], volume_step=i["volume_step"])
+                   spread=i["spread"], volume_min=i["volume_min"], volume_step=i["volume_step"],
+                   volume_max=i["volume_max"])
 
 
 @app.get("/api/watch")
@@ -276,9 +286,21 @@ def cached(key, ttl, fn):
     return v
 
 
+def _ssl_ctx():
+    """TELEGRAM_VERIFY_SSL=0 فقط برای تلگرام: وقتی VPS/آنتی‌ویروس/پروکسی گواهی خودامضا وسط راه می‌گذارد."""
+    import ssl
+    if os.environ.get("TELEGRAM_VERIFY_SSL", "1") == "0":
+        return ssl._create_unverified_context()
+    try:
+        import certifi
+        return ssl.create_default_context(cafile=certifi.where())
+    except Exception:
+        return None
+
+
 def http_get(url, timeout=15):
     req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (fxapp)"})
-    with urllib.request.urlopen(req, timeout=timeout) as r:
+    with urllib.request.urlopen(req, timeout=timeout, context=_ssl_ctx() if "api.telegram.org" in url else None) as r:
         return r.read()
 
 
@@ -531,7 +553,7 @@ def tg_send(text):
         body = _json.dumps({"chat_id": cid, "text": text, "parse_mode": "HTML"}).encode()
         req = urllib.request.Request(f"https://api.telegram.org/bot{tok}/sendMessage", data=body,
                                      headers={"content-type": "application/json"})
-        urllib.request.urlopen(req, timeout=15).read()
+        urllib.request.urlopen(req, timeout=15, context=_ssl_ctx()).read()
         TG_ERR = ""
         return True
     except urllib.error.HTTPError as e:
@@ -572,7 +594,8 @@ def tg_chatid():
 @app.get("/api/tgconfig")
 def tgconfig_get():
     tok, cid = tg_conf()
-    return jsonify(has_token=bool(tok), token_tail=tok[-4:] if tok else "", chat_id=cid)
+    return jsonify(has_token=bool(tok), token_tail=tok[-4:] if tok else "", chat_id=cid,
+                   notify_close=bool(_load("tg.json", {}).get("notify_close", True)))
 
 
 @app.post("/api/tgconfig")
@@ -583,6 +606,8 @@ def tgconfig_set():
         cur["token"] = str(d["token"]).strip()
     if "chat_id" in d:
         cur["chat_id"] = norm_chat(d["chat_id"])
+    if "notify_close" in d:
+        cur["notify_close"] = bool(d["notify_close"])
     _save("tg.json", cur)
     return tgconfig_get()
 
@@ -751,10 +776,12 @@ def guard_step(now=None):
                     GDONE.add(k)
                     glog(f"بستن {p['symbol']} ممکن نشد: {g}")
                 break
+            IGNORE[(BE.name.lower(), p["ticket"])] = time.time()
             try:
                 BE.close(p["ticket"], None, True)
                 ok = True
             except Exception:
+                IGNORE.pop((BE.name.lower(), p["ticket"]), None)
                 ok = False
             glog(f"{'بسته شد' if ok else 'بستن ناموفق'}: {p['symbol']} #{p['ticket']} قبل از خبر {label}")
             tg_send(f"{'🛡 معامله بسته شد' if ok else '❗ بستن ناموفق'}\n{p['symbol']} #{p['ticket']}\nقبل از خبر {label}")
@@ -785,23 +812,207 @@ def guard_set():
     return jsonify(dict(GUARD, log=GLOG[-20:]))
 
 
+# ===================== تریلینگ استاپ روی سرور =====================
+# با بسته بودن اپ هم کار می‌کند. هر قانون: پلتفرم، تیکت، فاصله (به واحد قیمت) و حداقل جابه‌جایی SL.
+TRAILS = _load("trails.json", [])
+trlock = threading.Lock()
+CLOSED_TRAIL = set()
+
+
+@app.get("/api/trail")
+def trail_list():
+    pf = BE.name.lower()
+    return jsonify([dict(ticket=t["ticket"], dist=t["dist"], symbol=t.get("symbol")) for t in TRAILS if t["pf"] == pf])
+
+
+@app.post("/api/trail")
+def trail_set():
+    g = guard()
+    if g:
+        return jsonify(error=g), 403
+    d = request.get_json(force=True)
+    ticket, dist = int(d["ticket"]), float(d["dist"])
+    if dist <= 0:
+        return jsonify(error="فاصله تریلینگ نامعتبر است"), 400
+    p = next((x for x in BE.positions()[0] if x["ticket"] == ticket), None)
+    if p is None:
+        return jsonify(error="معامله پیدا نشد"), 404
+    if not p["sl"]:
+        return jsonify(error="اول برای معامله SL بگذارید"), 400
+    pf = BE.name.lower()
+    step = float(d.get("step") or 0) or dist * 0.1
+    with trlock:
+        TRAILS[:] = [t for t in TRAILS if not (t["pf"] == pf and t["ticket"] == ticket)]
+        TRAILS.append(dict(pf=pf, ticket=ticket, symbol=p["symbol"], dist=dist, step=step, since=int(time.time())))
+        _save("trails.json", TRAILS)
+    return jsonify(ok=1)
+
+
+@app.post("/api/trail/delete")
+def trail_del():
+    ticket, pf = int(request.get_json(force=True)["ticket"]), BE.name.lower()
+    with trlock:
+        TRAILS[:] = [t for t in TRAILS if not (t["pf"] == pf and t["ticket"] == ticket)]
+        _save("trails.json", TRAILS)
+    return jsonify(ok=1)
+
+
+def trail_step():
+    for k, b in list(BACKENDS.items()):
+        rules = [t for t in TRAILS if t["pf"] == k]
+        if not rules:
+            continue
+        _tl.be = b
+        try:
+            if b.account() is None or guard():
+                continue
+            try:
+                ps = {p["ticket"]: p for p in b.positions()[0]}
+            except BErr:
+                continue
+            for r in rules:
+                p = ps.get(r["ticket"])
+                if p is None:
+                    with trlock:
+                        if r in TRAILS:
+                            TRAILS.remove(r)
+                            _save("trails.json", TRAILS)
+                    CLOSED_TRAIL.add((k, r["ticket"]))
+                    continue
+                if not p["sl"] or time.time() < r.get("retry", 0):
+                    continue
+                try:
+                    t = b.tick(p["symbol"])
+                    if not t:
+                        continue
+                    d = 1 if p["side"] == "B" else -1
+                    price = t["bid"] if d == 1 else t["ask"]
+                    info = b.symbol_info(p["symbol"])
+                    ns = round(price - d * r["dist"], info["digits"] if info else 5)
+                    if (ns - p["sl"]) * d > r["step"]:
+                        b.modify(p["ticket"], ns, p["tp"] or 0)
+                except BErr as e:
+                    r["retry"] = time.time() + 10
+                    if not r.get("logged"):
+                        r["logged"] = True
+                        glog(f"تریلینگ {p['symbol']} #{p['ticket']} ناموفق: {e.msg}")
+        finally:
+            _tl.be = None
+
+
+# ===================== اعلان تلگرام وقتی معامله بسته شد (TP / SL / ...) =====================
+KNOWN, PENDING_CL, IGNORE = {}, [], {}
+
+
+def _resolve_close(it, now):
+    k, p = it["pf"], it["pos"]
+    b = BACKENDS[k]
+    deals = []
+    try:
+        deals = [d for d in b.history(int(now) - 3 * 86400, int(now) + 600) if d["pos"] == p["ticket"]]
+    except BErr:
+        pass
+    outs = [d for d in deals if d["entry"] != 0]
+    if not outs:
+        it["tries"] += 1
+        if it["tries"] < 8:
+            return False
+    out = outs[-1] if outs else None
+    price = out["price"] if out else None
+    total = sum(d["profit"] + d["comm"] + d["swap"] + d.get("fee", 0) for d in deals) if out else p.get("profit", 0)
+    reason = out.get("reason") if out else None
+    kind = "close"
+    if out:
+        tol = abs(price) * 0.0005
+        if reason == 5 or (reason is None and p["tp"] and abs(price - p["tp"]) <= tol):
+            kind = "tp"
+        elif reason == 4 or (reason is None and p["sl"] and abs(price - p["sl"]) <= tol):
+            kind = "sl"
+        elif reason == 6:
+            kind = "so"
+    if _load("tg.json", {}).get("notify_close", True):
+        trail = it.get("trail")
+        head = {"tp": "✅ <b>TP فعال شد</b>", "sl": "🛑 <b>SL فعال شد</b>" + (" (تریلینگ)" if trail else ""),
+                "so": "⚠️ <b>Stop Out (بسته شدن اجباری)</b>", "close": "ℹ️ <b>معامله بسته شد</b>"}[kind]
+        try:
+            cur = (b.account() or {}).get("currency", "")
+        except Exception:
+            cur = ""
+        side = "خرید" if p["side"] == "B" else "فروش"
+        lines = [head, f"{p['symbol']} · {side} · {p['lots']} لات · {b.name} #{p['ticket']}"]
+        lines.append(f"ورود {p['price']}" + (f" ← خروج {price}" if price is not None else ""))
+        lines.append(f"{'سود' if total >= 0 else 'زیان'}: {total:+.2f} {cur}".strip() + ("" if out else " (تقریبی)"))
+        tg_send("\n".join(lines))
+    return True
+
+
+def closes_step():
+    now = time.time()
+    for k in [x for x, t in IGNORE.items() if now - t > 3600]:
+        IGNORE.pop(k, None)
+    for k, b in list(BACKENDS.items()):
+        _tl.be = b
+        try:
+            if b.account() is None:
+                continue
+            try:
+                cur = {p["ticket"]: p for p in b.positions()[0]}
+            except BErr:
+                continue
+            prev = KNOWN.get(k)
+            KNOWN[k] = cur
+            if prev is None:
+                continue
+            for t, p in prev.items():
+                if t in cur:
+                    continue
+                if IGNORE.pop((k, t), None):
+                    continue
+                trail = (k, t) in CLOSED_TRAIL or any(r["pf"] == k and r["ticket"] == t for r in TRAILS)
+                CLOSED_TRAIL.discard((k, t))
+                PENDING_CL.append(dict(pf=k, pos=p, tries=0, trail=trail))
+        finally:
+            _tl.be = None
+    keep = []
+    for it in PENDING_CL:
+        _tl.be = BACKENDS[it["pf"]]
+        try:
+            done = _resolve_close(it, now)
+        except Exception:
+            it["tries"] += 1
+            done = it["tries"] >= 8
+        finally:
+            _tl.be = None
+        if not done:
+            keep.append(it)
+    PENDING_CL[:] = keep
+
+
 def background_loop():
     n = 0
     while True:
-        time.sleep(2)
+        time.sleep(1)
         n += 1
+        for fn, every in ((trail_step, 1), (closes_step, 2), (talerts_step, 2), (_guard_all, 16)):
+            if n % every:
+                continue
+            try:
+                if fn is talerts_step and not TALERTS:
+                    continue
+                if fn is trail_step and not TRAILS:
+                    continue
+                fn()
+            except Exception:
+                pass
+
+
+def _guard_all():
+    for b in list(BACKENDS.values()):
+        _tl.be = b
         try:
-            if TALERTS:
-                talerts_step()
-            if n % 8 == 0:
-                for b in list(BACKENDS.values()):
-                    _tl.be = b
-                    try:
-                        guard_step()
-                    finally:
-                        _tl.be = None
-        except Exception:
-            pass
+            guard_step()
+        finally:
+            _tl.be = None
 
 
 if __name__ == "__main__":
@@ -811,4 +1022,12 @@ if __name__ == "__main__":
     print("سقف حجم:", MAX_LOT, "| حساب واقعی مجاز:", ALLOW_REAL)
     threading.Thread(target=background_loop, daemon=True).start()
     from waitress import serve
-    serve(app, host="127.0.0.1", port=PORT, threads=16)
+    if EA_PORT and EA_PORT != PORT and "mt4" in BACKENDS:
+        try:
+            print(f"پل روی 127.0.0.1:{PORT} و برای اکسپرت MT4 روی 127.0.0.1:{EA_PORT} گوش می‌دهد")
+            serve(app, listen=f"127.0.0.1:{PORT} 127.0.0.1:{EA_PORT}", threads=16)
+        except OSError as e:
+            print(f"پورت {EA_PORT} در دسترس نیست ({e}). فقط روی {PORT} اجرا می‌شود؛ اکسپرت MT4 کار نخواهد کرد مگر EA_PORT را روی پورت آزاد 80 یا 443 بگذارید.")
+            serve(app, host="127.0.0.1", port=PORT, threads=16)
+    else:
+        serve(app, host="127.0.0.1", port=PORT, threads=16)
