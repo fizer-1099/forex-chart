@@ -8,7 +8,7 @@ import os, time, hmac, threading, json as _json, urllib.request, urllib.error
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone, timedelta
 from email.utils import parsedate_to_datetime
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, has_request_context
 from flask_cors import CORS
 from backends import BErr, make_backend
 
@@ -17,14 +17,45 @@ MAX_LOT = float(os.environ.get("MAX_LOT", "0.1"))
 ALLOW_REAL = os.environ.get("ALLOW_REAL", "0") == "1"
 UTC_OFFSET_H = os.environ.get("MT5_UTC_OFFSET")  # اختلاف ساعت سرور بروکر با UTC (ساعت)
 PORT = int(os.environ.get("BRIDGE_PORT", "8787"))
-PLATFORM = os.environ.get("MT_PLATFORM", "mt5").strip().lower()
+PLATFORM = os.environ.get("MT_PLATFORM", "both").strip().lower()  # mt5 | mt4 | both
 if len(TOKEN) < 24:
     raise SystemExit("BRIDGE_TOKEN باید حداقل ۲۴ کاراکتر باشد")
 
-BE = make_backend(PLATFORM, UTC_OFFSET_H)
+# هر دو پلتفرم می‌توانند همزمان فعال باشند؛ اپ با هدر X-Platform یکی را انتخاب می‌کند
+BACKENDS = {}
+for _k in (["mt5", "mt4"] if PLATFORM in ("both", "auto", "") else [PLATFORM]):
+    try:
+        BACKENDS[_k] = make_backend(_k, UTC_OFFSET_H)
+    except Exception as _e:
+        print(f"پلتفرم {_k} فعال نشد: {_e}")
+if not BACKENDS:
+    raise SystemExit("هیچ پلتفرمی فعال نشد (MT_PLATFORM را mt4 یا mt5 بگذارید)")
+DEFAULT = BACKENDS.get("mt5") or BACKENDS["mt4"]
+_tl = threading.local()
+
+
+def _cur():
+    b = getattr(_tl, "be", None)
+    if b is not None:
+        return b
+    if has_request_context():
+        k = (request.headers.get("X-Platform") or request.args.get("platform") or "").strip().lower()
+        if k:
+            if k not in BACKENDS:
+                raise BErr(f"پلتفرم {k.upper()} روی پل فعال نیست (MT_PLATFORM در run.bat را بررسی کنید)", 400)
+            return BACKENDS[k]
+    return DEFAULT
+
+
+class _Proxy:
+    def __getattr__(self, n):
+        return getattr(_cur(), n)
+
+
+BE = _Proxy()
 
 app = Flask(__name__)
-CORS(app, allow_headers=["X-Token", "Content-Type"])
+CORS(app, allow_headers=["X-Token", "Content-Type", "X-Platform"])
 
 
 @app.errorhandler(BErr)
@@ -54,18 +85,33 @@ def guard():
 # ---- مسیرهای اختصاصی اکسپرت MT4 ----
 @app.post("/ea/poll")
 def ea_poll():
-    if not hasattr(BE, "ea_poll"):
-        return jsonify(error="MT_PLATFORM روی mt4 تنظیم نشده است"), 400
+    b = BACKENDS.get("mt4")
+    if b is None:
+        return jsonify(error="MT4 روی پل فعال نیست (MT_PLATFORM)"), 400
     d = _json.loads(request.get_data().decode("utf-8", "replace").replace("\x00", "") or "{}")
-    return BE.ea_poll(d), 200, {"Content-Type": "text/plain; charset=utf-8"}
+    return b.ea_poll(d), 200, {"Content-Type": "text/plain; charset=utf-8"}
 
 
 @app.post("/ea/result")
 def ea_result():
-    if not hasattr(BE, "ea_result"):
-        return jsonify(error="MT_PLATFORM روی mt4 تنظیم نشده است"), 400
-    BE.ea_result(request.args["id"], request.args.get("last", "1") == "1", request.get_data().decode("utf-8", "replace"))
+    b = BACKENDS.get("mt4")
+    if b is None:
+        return jsonify(error="MT4 روی پل فعال نیست (MT_PLATFORM)"), 400
+    b.ea_result(request.args["id"], request.args.get("last", "1") == "1", request.get_data().decode("utf-8", "replace"))
     return "ok"
+
+
+@app.get("/api/platforms")
+def platforms():
+    out = {}
+    for k, b in BACKENDS.items():
+        try:
+            a = b.account()
+        except Exception:
+            a = None
+        out[k] = dict(online=a is not None, login=a["login"] if a else None, server=a["server"] if a else None,
+                      demo=a["demo"] if a else None)
+    return jsonify(platforms=out, default=DEFAULT.name.lower())
 
 
 @app.get("/api/ping")
@@ -417,7 +463,7 @@ def analyze():
         return call_llm(prompt)
 
     try:
-        text = cached("ai|" + "|".join(sorted(symbols)) + "|" + scope, 1200, build)
+        text = cached("ai|" + BE.name + "|" + "|".join(sorted(symbols)) + "|" + scope, 1200, build)
         return jsonify(text=text)
     except Exception as ex:
         return jsonify(error=str(ex)), 502
@@ -624,7 +670,7 @@ def talerts_add():
         t = BE.tick(sym)
         ref = t["bid"] if t else price
     with tlock:
-        TALERTS.append(dict(id=d["id"], symbol=sym, price=price, up=price >= float(ref)))
+        TALERTS.append(dict(id=d["id"], symbol=sym, price=price, up=price >= float(ref), pf=BE.name.lower()))
         _save("talerts.json", TALERTS)
     return jsonify(ok=1)
 
@@ -643,7 +689,7 @@ def talerts_step():
         hit = []
         for a in TALERTS:
             try:
-                t = BE.tick(a["symbol"])
+                t = (BACKENDS.get(a.get("pf")) or DEFAULT).tick(a["symbol"])
             except BErr:
                 t = None
             if t and ((a["up"] and t["bid"] >= a["price"]) or (not a["up"] and t["bid"] <= a["price"])):
@@ -692,7 +738,7 @@ def guard_step(now=None):
                 continue
             label = f"{e['country']} · {e['title']} ({iran(e['ts'])} به وقت ایران)"
             if dt > GUARD["before"] * 60 or GUARD["mode"] != "close":
-                k = (p["ticket"], e["ts"], "w")
+                k = (BE.name, p["ticket"], e["ts"], "w")
                 if k not in GDONE and dt > 0:
                     GDONE.add(k)
                     glog(f"هشدار برای {p['symbol']}: خبر {label}")
@@ -700,7 +746,7 @@ def guard_step(now=None):
                 continue
             g = guard()
             if g:
-                k = (p["ticket"], e["ts"], "b")
+                k = (BE.name, p["ticket"], e["ts"], "b")
                 if k not in GDONE:
                     GDONE.add(k)
                     glog(f"بستن {p['symbol']} ممکن نشد: {g}")
@@ -748,13 +794,20 @@ def background_loop():
             if TALERTS:
                 talerts_step()
             if n % 8 == 0:
-                guard_step()
+                for b in list(BACKENDS.values()):
+                    _tl.be = b
+                    try:
+                        guard_step()
+                    finally:
+                        _tl.be = None
         except Exception:
             pass
 
 
 if __name__ == "__main__":
-    BE.start()
+    for b in BACKENDS.values():
+        b.start()
+    print("پلتفرم‌های فعال:", ", ".join(k.upper() for k in BACKENDS), "| پیش‌فرض:", DEFAULT.name)
     print("سقف حجم:", MAX_LOT, "| حساب واقعی مجاز:", ALLOW_REAL)
     threading.Thread(target=background_loop, daemon=True).start()
     from waitress import serve

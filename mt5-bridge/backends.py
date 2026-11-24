@@ -90,8 +90,10 @@ class Mt5Backend:
 
     def start(self):
         m = self.m
+        self._try = time.time()
         if not m.initialize():
-            raise SystemExit(f"اتصال به MT5 ناموفق بود: {m.last_error()} (برنامه MT5 باید باز و لاگین باشد)")
+            print(f"MT5: هنوز وصل نشد ({m.last_error()}). برنامه MT5 باید باز و لاگین باشد؛ بعداً خودکار دوباره تلاش می‌شود.")
+            return
         a = m.account_info()
         print("پلتفرم: MT5 | حساب:", a.login, a.server, "DEMO" if a.trade_mode == m.ACCOUNT_TRADE_MODE_DEMO else "REAL")
 
@@ -111,7 +113,15 @@ class Mt5Backend:
         m = self.m
         a = m.account_info()
         if a is None:
-            return None
+            if time.time() - getattr(self, "_try", 0) > 10:  # MT5 بعد از پل باز شده باشد، دوباره وصل شو
+                self._try = time.time()
+                try:
+                    m.initialize()
+                    a = m.account_info()
+                except Exception:
+                    a = None
+            if a is None:
+                return None
         ti = m.terminal_info()
         return dict(login=a.login, server=a.server, demo=a.trade_mode == m.ACCOUNT_TRADE_MODE_DEMO,
                     balance=a.balance, equity=a.equity, currency=a.currency, profit=a.profit, free=a.margin_free,
@@ -419,6 +429,8 @@ class Mt4Backend:
 
     def tick(self, sym):
         sym = _sym(sym)
+        if not self.online():
+            raise BErr("اکسپرت FxBridge به MT4 وصل نیست", 503)
         self._watch([sym])
         self._wait_ticks([sym], 2.0)
         t = self.ticks.get(sym)
@@ -493,6 +505,8 @@ class Mt4Backend:
 
     def watch(self, symbols):
         syms = [_sym(s) for s in symbols if s]
+        if not self.online():
+            raise BErr("اکسپرت FxBridge به MT4 وصل نیست", 503)
         self._watch(syms)
         self._wait_ticks(syms, 1.5)
         return [dict(symbol=s, bid=self.ticks[s]["bid"], ask=self.ticks[s]["ask"], chg=self.ticks[s]["chg"])
