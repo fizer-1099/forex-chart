@@ -207,11 +207,11 @@ def close():
         return jsonify(error=g), 403
     d = request.get_json(force=True)
     k = (BE.name.lower(), int(d["ticket"]))
-    IGNORE[k] = time.time()  # بستن عمدی از اپ؛ اعلان TP/SL نمی‌خواهد
+    MANUAL[k] = time.time()  # بستن دستی از اپ؛ در پیام تلگرام «دستی» نوشته می‌شود
     try:
         return jsonify(BE.close(int(d["ticket"]), d.get("volume")))
     except Exception:
-        IGNORE.pop(k, None)
+        MANUAL.pop(k, None)
         raise
 
 
@@ -595,7 +595,8 @@ def tg_chatid():
 def tgconfig_get():
     tok, cid = tg_conf()
     return jsonify(has_token=bool(tok), token_tail=tok[-4:] if tok else "", chat_id=cid,
-                   notify_close=bool(_load("tg.json", {}).get("notify_close", True)))
+                   notify_close=bool(_load("tg.json", {}).get("notify_close", True)),
+                   notify_open=bool(_load("tg.json", {}).get("notify_open", True)))
 
 
 @app.post("/api/tgconfig")
@@ -608,6 +609,8 @@ def tgconfig_set():
         cur["chat_id"] = norm_chat(d["chat_id"])
     if "notify_close" in d:
         cur["notify_close"] = bool(d["notify_close"])
+    if "notify_open" in d:
+        cur["notify_open"] = bool(d["notify_open"])
     _save("tg.json", cur)
     return tgconfig_get()
 
@@ -901,25 +904,55 @@ def trail_step():
 
 
 # ===================== اعلان تلگرام وقتی معامله بسته شد (TP / SL / ...) =====================
-KNOWN, PENDING_CL, IGNORE = {}, [], {}
+KNOWN, PENDING_CL, IGNORE, MANUAL = {}, [], {}, {}
+
+
+def _tg_on(key):
+    return bool(_load("tg.json", {}).get(key, True))
+
+
+def _side_fa(p):
+    return "خرید" if p["side"] == "B" else "فروش"
+
+
+def _notify_open(k, p):
+    if not _tg_on("notify_open"):
+        return
+    lines = ["📈 <b>معامله باز شد</b>", f"{p['symbol']} · {_side_fa(p)} · {p['lots']} لات · {BACKENDS[k].name} #{p['ticket']}",
+             f"قیمت ورود: {p['price']}"]
+    lv = []
+    if p.get("sl"):
+        lv.append(f"SL: {p['sl']}")
+    if p.get("tp"):
+        lv.append(f"TP: {p['tp']}")
+    if lv:
+        lines.append(" · ".join(lv))
+    tg_send("\n".join(lines))
 
 
 def _resolve_close(it, now):
     k, p = it["pf"], it["pos"]
     b = BACKENDS[k]
+    partial = it.get("partial")
     deals = []
     try:
         deals = [d for d in b.history(int(now) - 3 * 86400, int(now) + 600) if d["pos"] == p["ticket"]]
     except BErr:
         pass
     outs = [d for d in deals if d["entry"] != 0]
+    if partial:  # فقط معامله‌ی بخشی همین لحظه (نه بخشی‌های قبلی)
+        outs = [d for d in outs if d["time"] >= it["t0"] - 15]
     if not outs:
         it["tries"] += 1
         if it["tries"] < 8:
             return False
     out = outs[-1] if outs else None
     price = out["price"] if out else None
-    total = sum(d["profit"] + d["comm"] + d["swap"] + d.get("fee", 0) for d in deals) if out else p.get("profit", 0)
+    if out:
+        total = (out["profit"] + out["comm"] + out["swap"] + out.get("fee", 0)) if partial else \
+            sum(d["profit"] + d["comm"] + d["swap"] + d.get("fee", 0) for d in deals)
+    else:
+        total = p.get("profit", 0)
     reason = out.get("reason") if out else None
     kind = "close"
     if out:
@@ -930,26 +963,39 @@ def _resolve_close(it, now):
             kind = "sl"
         elif reason == 6:
             kind = "so"
-    if _load("tg.json", {}).get("notify_close", True):
+        elif it.get("manual"):
+            kind = "manual"
+    elif it.get("manual"):
+        kind = "manual"
+    if it.get("manual") and kind in ("tp", "sl") and reason is None:
+        kind = "manual"  # قیمت نزدیک TP/SL بوده ولی خودمان از اپ بسته‌ایم
+    if _tg_on("notify_close"):
         trail = it.get("trail")
         head = {"tp": "✅ <b>TP فعال شد</b>", "sl": "🛑 <b>SL فعال شد</b>" + (" (تریلینگ)" if trail else ""),
-                "so": "⚠️ <b>Stop Out (بسته شدن اجباری)</b>", "close": "ℹ️ <b>معامله بسته شد</b>"}[kind]
+                "so": "⚠️ <b>Stop Out (بسته شدن اجباری)</b>", "manual": "🔒 <b>معامله بسته شد (دستی)</b>",
+                "close": "ℹ️ <b>معامله بسته شد</b>"}[kind]
+        if partial:
+            head = "✂️ <b>بخشی از معامله بسته شد</b>" + {"tp": " · TP", "sl": " · SL"}.get(kind, "")
         try:
             cur = (b.account() or {}).get("currency", "")
         except Exception:
             cur = ""
-        side = "خرید" if p["side"] == "B" else "فروش"
-        lines = [head, f"{p['symbol']} · {side} · {p['lots']} لات · {b.name} #{p['ticket']}"]
+        lots = partial if partial else p["lots"]
+        lines = [head, f"{p['symbol']} · {_side_fa(p)} · {lots} لات · {b.name} #{p['ticket']}"]
         lines.append(f"ورود {p['price']}" + (f" ← خروج {price}" if price is not None else ""))
         lines.append(f"{'سود' if total >= 0 else 'زیان'}: {total:+.2f} {cur}".strip() + ("" if out else " (تقریبی)"))
+        if partial:
+            lines.append(f"باقی‌مانده: {it.get('remnant')} لات")
         tg_send("\n".join(lines))
     return True
 
 
 def closes_step():
     now = time.time()
-    for k in [x for x, t in IGNORE.items() if now - t > 3600]:
-        IGNORE.pop(k, None)
+    for key in [x for x, t in IGNORE.items() if now - t > 3600]:
+        IGNORE.pop(key, None)
+    for key in [x for x, t in MANUAL.items() if now - t > 3600]:
+        MANUAL.pop(key, None)
     for k, b in list(BACKENDS.items()):
         _tl.be = b
         try:
@@ -963,14 +1009,42 @@ def closes_step():
             KNOWN[k] = cur
             if prev is None:
                 continue
-            for t, p in prev.items():
-                if t in cur:
-                    continue
+            gone = [p for t, p in prev.items() if t not in cur]
+            new = [p for t, p in cur.items() if t not in prev]
+            # MT4: بستن بخشی = تیکت قدیمی بسته می‌شود و تیکت جدید با لات کمتر می‌آید
+            for n in list(new):
+                m = next((g for g in gone if g["symbol"] == n["symbol"] and g["side"] == n["side"]
+                          and abs(g["price"] - n["price"]) < 1e-9 and g["lots"] > n["lots"] + 1e-9), None)
+                if m:
+                    new.remove(n)
+                    gone.remove(m)
+                    with trlock:
+                        for r in TRAILS:
+                            if r["pf"] == k and r["ticket"] == m["ticket"]:
+                                r["ticket"] = n["ticket"]
+                        _save("trails.json", TRAILS)
+                    PENDING_CL.append(dict(pf=k, pos=m, tries=0, t0=now, partial=round(m["lots"] - n["lots"], 3),
+                                           remnant=n["lots"], manual=MANUAL.pop((k, m["ticket"]), None) is not None,
+                                           trail=False))
+            # MT5: بستن بخشی = همان تیکت با لات کمتر
+            for t, p in cur.items():
+                q = prev.get(t)
+                if q and q["lots"] > p["lots"] + 1e-9:
+                    PENDING_CL.append(dict(pf=k, pos=q, tries=0, t0=now, partial=round(q["lots"] - p["lots"], 3),
+                                           remnant=p["lots"], manual=MANUAL.pop((k, t), None) is not None, trail=False))
+            for p in gone:
+                t = p["ticket"]
                 if IGNORE.pop((k, t), None):
                     continue
                 trail = (k, t) in CLOSED_TRAIL or any(r["pf"] == k and r["ticket"] == t for r in TRAILS)
                 CLOSED_TRAIL.discard((k, t))
-                PENDING_CL.append(dict(pf=k, pos=p, tries=0, trail=trail))
+                PENDING_CL.append(dict(pf=k, pos=p, tries=0, t0=now, trail=trail,
+                                       manual=MANUAL.pop((k, t), None) is not None))
+            for p in new:
+                try:
+                    _notify_open(k, p)
+                except Exception:
+                    pass
         finally:
             _tl.be = None
     keep = []

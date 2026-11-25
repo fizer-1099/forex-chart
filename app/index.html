@@ -689,7 +689,7 @@ new MutationObserver(oscLayout).observe($('oscs'),{childList:true});
 })();
 const SB=document.createElement('div');SB.id='srcb';SB.style.cssText='position:absolute;top:3px;left:6px;z-index:4;pointer-events:none;font-size:10px;padding:2px 7px;border-radius:6px;color:#fff;direction:rtl;max-width:92%';$('chart').appendChild(SB);
 function badge(){const last=D.length?D[D.length-1]:null,real=SRCL!=='Sample';SB.style.background=real?'#16a34a':'#d97706';
-  SB.textContent=(real?'✓ '+SRCL:'⚠ دیتای نمونه (غیرواقعی)'+(DERR?' — '+DERR:''))+(last?' · آخرین '+last.close.toFixed(DEC)+' @ '+fmtT(last.time)+(tzOff()?'':'Z'):'')+' · v24'}
+  SB.textContent=(real?'✓ '+SRCL:'⚠ دیتای نمونه (غیرواقعی)'+(DERR?' — '+DERR:''))+(last?' · آخرین '+last.close.toFixed(DEC)+' @ '+fmtT(last.time)+(tzOff()?'':'Z'):'')+' · v25'}
 
 // انتخاب خودکار دیتای پایه بر اساس تایم‌فریم
 let CURTF=null;
@@ -710,7 +710,8 @@ const OT={mkt:['اجرا در قیمت بازار',0],bl:['بای لیمیت','B
 const OTN={mkt:'MARKET',bl:'BUY LIMIT',sl:'SELL LIMIT',bs:'BUY STOP',ss:'SELL STOP'};
 let DRAFT=null,PEND=[],PL=[],tOT='mkt',MSGT=0;
 const SLT={sig:'',l:{},t:{},ron:null};
-const subj=()=>rp.pos||lpos()||DRAFT;
+let NEWT=false,SELT=0;
+const subj=()=>rp.pos||(NEWT?null:lpos())||DRAFT;
 const lastPx=()=>rp.on?base[rp.i].close:(MT5.ok&&MT5.tick?MT5.tick.bid:(D.length?D[D.length-1].close:0));
 const msg=t=>{MSGT=Date.now()+4000;const e=$('tst');if(e)e.textContent=t;const g=$('tpmsg');if(g)g.textContent=t};
 function setLvl(k,pr){const p=subj();if(!p)return;const d=p.side==='B'?1:-1;
@@ -759,9 +760,9 @@ function sltLoop(){
       const pr=k==='en'?p.entry:p[k],y=candles.priceToCoordinate(pr),t=SLT.t[k];
       if(SLT.l[k].options().price!==pr)SLT.l[k].applyOptions({price:pr});
       if(y==null){t.style.display='none';return}
-      t.style.display='block';t.style.top=Math.max(18,Math.min(H-18,y))+'px';
+      const yMin=58,yMax=H-76,ar=y<yMin?'▲ ':(y>yMax?'▼ ':'');t.style.display='block';t.style.top=Math.max(yMin,Math.min(yMax,y))+'px';
       const pips=(pr-p.entry)*d/PIP;
-      t.textContent=k==='en'?(p===DRAFT?OTN[p.type]+'  '+pr.toFixed(DEC):'ENTRY '+pr.toFixed(DEC)+plTxt(p)):k.toUpperCase()+'  '+pips.toFixed(1)+'p  '+(pips*PV*p.lots).toFixed(2)+'$'+(k==='tp'&&p.sl!=null?'  R:R '+(Math.abs(pr-p.entry)/Math.abs(p.entry-p.sl)).toFixed(1):'');
+      t.textContent=ar+(k==='en'?(p===DRAFT?OTN[p.type]+'  '+pr.toFixed(DEC):'ENTRY '+pr.toFixed(DEC)+plTxt(p)):k.toUpperCase()+'  '+pips.toFixed(1)+'p  '+(pips*PV*p.lots).toFixed(2)+'$'+(k==='tp'&&p.sl!=null?'  R:R '+(Math.abs(pr-p.entry)/Math.abs(p.entry-p.sl)).toFixed(1):''));
     });
   }
   if(!rp.on&&PEND.length){PEND=[];drawPend()}
@@ -832,7 +833,8 @@ function listPend(){
   const arr=live?MT5.orders.filter(o=>o.symbol===MT5S(SYM)).map(o=>({label:OTN[o.type]+' '+o.lots+' @ '+o.price,cancel:async()=>{try{await mt('/api/cancel',{ticket:o.ticket});MTSIG='';flash('سفارش لغو شد')}catch(e){flash(e.message)}}})):PEND.map(o=>({label:OTN[o.type]+' '+o.lots+' @ '+o.price.toFixed(DEC),cancel:()=>{PEND=PEND.filter(x=>x!==o);drawPend();listPend()}}));
   arr.forEach(o=>{const r=document.createElement('div');r.className='row';r.innerHTML='<span dir="ltr" style="flex:1">'+o.label+'</span>';const b=document.createElement('button');b.textContent='لغو';b.onclick=o.cancel;r.appendChild(b);l.appendChild(r)});
 }
-function closeTrade(){$('trd').style.display='none';DRAFT=null}
+function closeTrade(){$('trd').style.display='none';DRAFT=null;NEWT=false}
+function cyclePos(d){const lps=MT5.pos.filter(x=>x.symbol===MT5S(SYM));if(lps.length<2)return;const i=lps.findIndex(x=>x.ticket===(LPOS&&LPOS.ticket));SELT=lps[(i+d+lps.length)%lps.length].ticket;syncLpos();buildTrade()}
 function openTrade(){const t=$('trd');if(t.style.display==='block'){closeTrade();return}t.style.display='block';SLT.ron=rp.on||MT5.ok;if(SLT.ron&&!subj())mkDraft();buildTrade()}
 function tglStyle(){[['ttp',DRAFT.tp,'#16a34a'],['tsl',DRAFT.sl,'#dc2626']].forEach(([id,v,c])=>{const b=$(id);b.style.background=v!=null?c:'';b.style.color=v!=null?'#fff':c})}
 function buildTrade(){
@@ -840,9 +842,13 @@ function buildTrade(){
   if(!rp.on&&!MT5.ok){DRAFT=null;t.innerHTML='<div class="row"><span class="mut" style="flex:1">معامله فقط در Replay ممکن است.</span><button id="tstart">شروع Replay</button><button id="tcl">✕</button></div>';
     $('tstart').onclick=()=>{startReplay()};$('tcl').onclick=closeTrade;return}
   let h='<div class="row" style="flex-wrap:nowrap"><b dir="ltr">'+SYM+'</b><span id="tst" class="mut" style="flex:1;text-align:center;font-size:11px"></span><button id="tplay">▶</button><button id="tstep">⏭</button><button id="tfull">⛶</button><button id="tcl">✕</button></div>';
-  if(rp.pos||lpos())h+='<div class="row"><button id="tcp" style="flex:1">بستن معامله</button></div><div class="row"><button id="trf">ریسک‌فری</button><button id="thf">بستن ½</button><button id="ttr">تریلینگ: خاموش</button><button id="tca">بستن همه</button></div>';
+  const mg=rp.pos||(lpos()&&!NEWT);
+  if(mg){const lps=lpos()?MT5.pos.filter(x=>x.symbol===MT5S(SYM)):[];if(lps.length>1){const i=Math.max(0,lps.findIndex(x=>x.ticket===LPOS.ticket));h+='<div class="row" style="flex-wrap:nowrap"><button id="tpv">‹</button><span class="mut" dir="ltr" style="flex:1;text-align:center;font-size:12px">#'+LPOS.ticket+' · '+(LPOS.side==='B'?'BUY':'SELL')+' '+LPOS.lots+' · '+(i+1)+'/'+lps.length+'</span><button id="tpn">›</button></div>'}
+    if(lpos())h+='<div class="row"><button id="tnw" style="flex:1">+ معامله جدید روی '+SYM+'</button></div>'}
+  if(mg)h+='<div class="row"><button id="tcp" style="flex:1">بستن معامله</button></div><div class="row"><button id="trf">ریسک‌فری</button><button id="thf">بستن ½</button><button id="ttr">تریلینگ: خاموش</button><button id="tca">بستن همه</button></div>';
   else if(!DRAFT)h+='<div class="row"><button id="tnew" style="flex:1">+ سفارش جدید</button></div>';
   else{
+    if(lpos()&&NEWT)h+='<div class="row"><button id="tbk" style="flex:1">← مدیریت معامله باز #'+LPOS.ticket+'</button></div>';
     h+=`<div class="row" style="flex-wrap:nowrap"><button class="sb" id="tsell" style="background:#dc2626">SELL<br><span id="tsp"></span></button><div class="row" style="flex:1;justify-content:center;flex-wrap:nowrap"><button id="tlm">−</button><input id="tlot" type="number" step="0.01" value="${DRAFT.lots}" style="width:60px;text-align:center"><button id="tlp">+</button></div><button class="sb" id="tbuy" style="background:#2563eb">BUY<br><span id="tbp"></span></button></div>`;
     h+=(DRAFT.pending?'':'<div class="row" id="tsd"><span class="mut">جهت معامله:</span><button data-sd="B">BUY</button><button data-sd="S">SELL</button></div>');h+='<div class="row"><button class="circ" id="ttp" style="border-color:#16a34a;color:#16a34a">TP</button><button class="circ" id="tsl" style="border-color:#dc2626;color:#dc2626">SL</button></div><div class="row"><span class="mut">ریسک٪</span><input id="trk" type="number" step="0.1" value="'+$('rkp').value+'" style="width:60px"><label class="mut" style="display:flex;align-items:center;gap:3px"><input type="checkbox" id="tar"'+(ARISK?' checked':'')+'>خودکار</label><button id="tauto">لات از ریسک</button></div><div id="trr" class="mut" style="font-size:11px"></div>';
     h+='<div class="row" style="flex-wrap:nowrap;overflow-x:auto">'+Object.keys(OT).map(k=>`<button data-o="${k}" class="${k===tOT?'on':''}">${OT[k][0]}</button>`).join('')+'</div>';
@@ -852,6 +858,9 @@ function buildTrade(){
   if($('tcp'))$('tcp').onclick=()=>{if(lpos())liveClose();else{closePos(base[rp.i].close,'MAN');status()}buildTrade()};
   if($('trf')){$('trf').onclick=riskFree;$('thf').onclick=halfClose;$('ttr').onclick=toggleTrail;$('tca').onclick=closeAll;trLabels()}
   if($('tnew'))$('tnew').onclick=()=>{mkDraft();buildTrade()};
+  if($('tnw'))$('tnw').onclick=()=>{NEWT=true;mkDraft();buildTrade()};
+  if($('tbk'))$('tbk').onclick=()=>{NEWT=false;DRAFT=null;buildTrade()};
+  if($('tpv')){$('tpv').onclick=()=>cyclePos(-1);$('tpn').onclick=()=>cyclePos(1)}
   if(DRAFT&&$('tlot')){
     const D0=DRAFT;
     $('tlot').oninput=()=>{setAR(false);D0.lots=Math.max(.01,+$('tlot').value||.01);$('lot').value=D0.lots};
@@ -963,7 +972,7 @@ async function mt(path,body){
   const j=await r.json();if(!r.ok)throw new Error(j.error||('HTTP '+r.status));return j;
 }
 async function mt5Connect(){
-  try{MT5.acc=await mt('/api/ping');MT5.ok=true;MT5.listed=false;
+  try{MT5.acc=await mt('/api/ping');MT5.ok=true;MT5.listed=false;MT5._seen=null;SELT=0;NEWT=false;
     try{const l=await mt('/api/symbols');if(Array.isArray(l)&&l.length){ALLS=l;MT5.suf='';MT5.listed=true}}catch(e){}
     try{localStorage.setItem('fx_mt5',JSON.stringify({url:MT5.url,tok:MT5.tok,suf:MT5.suf,pf:MT5.pf}))}catch(e){}
     startMtPoll();return true}
@@ -981,7 +990,11 @@ function startMtPoll(){
   },1500);
 }
 function syncLpos(){
-  const lp=MT5.pos.find(x=>x.symbol===MT5S(SYM));
+  const sym=MT5S(SYM),lps=MT5.pos.filter(x=>x.symbol===sym);
+  if(!MT5._seen)MT5._seen=new Set(MT5.pos.map(x=>x.ticket));
+  else MT5.pos.forEach(x=>{if(!MT5._seen.has(x.ticket)){MT5._seen.add(x.ticket);if(x.symbol===sym){SELT=x.ticket;NEWT=false;MTSIG=''}}});
+  if(!lps.length)NEWT=false;
+  const lp=lps.find(x=>x.ticket===SELT)||lps[0];
   if(!lp)LPOS=null;
   else if(!LPOS||LPOS.ticket!==lp.ticket)LPOS={live:true,ticket:lp.ticket,side:lp.side,entry:lp.price,sl:lp.sl||null,tp:lp.tp||null,lots:lp.lots,_s:lp.sl,_t:lp.tp};
   else{if(lp.sl!==LPOS._s){LPOS._s=lp.sl;LPOS.sl=lp.sl||null}if(lp.tp!==LPOS._t){LPOS._t=lp.tp;LPOS.tp=lp.tp||null}}
@@ -1000,7 +1013,7 @@ async function liveOrder(side,type){
   if(!checkOrder(side,e,sl,tp))return;
   const txt=`${MT5.acc.demo?'DEMO':'⚠ حساب واقعی'}\n${OTN[type]} ${side==='B'?'BUY':'SELL'} ${d.lots} لات ${SYM}\nقیمت ${e.toFixed(DEC)}  SL ${sl.toFixed(DEC)}  TP ${tp!=null?tp.toFixed(DEC):'-'}${newsWarn(SYM)}\nارسال شود؟`;
   if(!confirm(txt))return;
-  try{const r=await mt('/api/order',{symbol:MT5S(SYM),side,type,lots:d.lots,price:pend?d.entry:0,sl,tp});flash('✓ '+(r.comment||'انجام شد')+' #'+r.ticket);DRAFT=null;MTSIG='';syncLpos();buildTrade();closeTP()}
+  try{const r=await mt('/api/order',{symbol:MT5S(SYM),side,type,lots:d.lots,price:pend?d.entry:0,sl,tp});flash('✓ '+(r.comment||'انجام شد')+' #'+r.ticket);DRAFT=null;NEWT=false;MTSIG='';syncLpos();buildTrade();closeTP()}
   catch(er){msg(hintErr(er.message));alert('سفارش انجام نشد:\n'+hintErr(er.message))}
 }
 function openMT5(){
@@ -1723,7 +1736,8 @@ async function openTG(){
   dl.innerHTML=`<div class="row" style="justify-content:space-between"><button id="dcl">←</button><b>ربات تلگرام</b></div>
 <p class="mut" style="font-size:12px;line-height:1.9">هشدارهای قیمت و اعلان‌های محافظ اخبار به تلگرام (چت شخصی، گروه یا کانال) فرستاده می‌شود، حتی وقتی اپ بسته است. توکن فقط روی VPS ذخیره می‌شود.</p>
 <label class="row"><span class="mut" style="flex:1">هشدارهای قیمت به تلگرام هم برود</span><input type="checkbox" id="t_on"${SET.tg_on?' checked':''}></label>
-<label class="row"><span class="mut" style="flex:1">اعلان وقتی معامله به TP یا SL رسید</span><input type="checkbox" id="t_nc"${c.notify_close!==false?' checked':''}${MT5.ok?'':' disabled'}></label>
+<label class="row"><span class="mut" style="flex:1">اعلان باز شدن معامله</span><input type="checkbox" id="t_no"${c.notify_open!==false?' checked':''}${MT5.ok?'':' disabled'}></label>
+<label class="row"><span class="mut" style="flex:1">اعلان بسته شدن معامله (TP / SL / دستی)</span><input type="checkbox" id="t_nc"${c.notify_close!==false?' checked':''}${MT5.ok?'':' disabled'}></label>
 <label class="row"><span class="mut" style="flex:1">توکن ربات</span><input id="t_tok" type="password" dir="ltr" style="width:100%" placeholder="${c.has_token?'ذخیره شده (…'+c.token_tail+') ؛ برای تغییر بنویسید':'123456:ABC...'}"></label>
 <label class="row"><span class="mut" style="flex:1">شناسه چت یا کانال</span><input id="t_cid" dir="ltr" style="width:100%" value="${c.chat_id||''}" placeholder="@mt42050 یا -100123456789"></label>
 <div class="row"><button id="t_save">ذخیره روی VPS</button><button id="t_test">ارسال پیام آزمایشی</button><button id="t_id">یافتن Chat ID</button></div><div id="t_st" class="mut" style="font-size:12px;line-height:1.9;margin:8px 0"></div>
@@ -1733,6 +1747,7 @@ async function openTG(){
   const st=t=>$q('t_st').textContent=t;
   $('t_on').onchange=()=>{SET.tg_on=$('t_on').checked?1:0;saveSET()};
   $('t_nc').onchange=()=>mtPost('/api/tgconfig',{notify_close:$('t_nc').checked},10000).catch(e=>st('✗ '+e.message));
+  $('t_no').onchange=()=>mtPost('/api/tgconfig',{notify_open:$('t_no').checked},10000).catch(e=>st('✗ '+e.message));
   $('t_save').onclick=async()=>{if(!MT5.ok){st('ذخیره روی VPS به اتصال MT4/MT5 نیاز دارد (برای Render از Environment استفاده کنید)');return}st('در حال ذخیره...');try{const j=await mtPost('/api/tgconfig',{token:$('t_tok').value.trim(),chat_id:$('t_cid').value.trim()},10000);$('t_cid').value=j.chat_id;$('t_tok').value='';if(MT5.acc)MT5.acc.tg=!!(j.has_token&&j.chat_id);st('✓ ذخیره شد؛ «ارسال پیام آزمایشی» را بزنید')}catch(e){st('✗ '+e.message)}};
   $('t_test').onclick=async()=>{st('در حال ارسال...');try{if(MT5.ok)await mtPost('/api/telegram/test',{},20000);else if(SRV)await srvPost('/api/telegram/test',{},20000);else throw new Error('به MT5 یا سرور Render وصل نیستید');st('✓ پیام آزمایشی ارسال شد؛ تلگرام را ببینید')}catch(e){st('✗ '+e.message)}};
   $('t_id').onclick=async()=>{if(!MT5.ok){st('این بخش به اتصال MT4/MT5 نیاز دارد');return}st('در حال جستجو...');try{const a=await mtTO('/api/telegram/chatid',15000);st(a.length?'Chat ID: '+a.map(x=>x.id+(x.name?' ('+x.name+')':'')).join(' ، '):'چیزی پیدا نشد؛ اول به ربات (یا در کانال) پیام بدهید')}catch(e){st('✗ '+e.message)}};
