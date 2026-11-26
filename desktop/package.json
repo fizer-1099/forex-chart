@@ -1,0 +1,23 @@
+{
+  "name": "forex-chart-desktop",
+  "version": "1.0.0",
+  "description": "Forex Chart - Windows app",
+  "main": "main.js",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win portable --x64 --publish never"
+  },
+  "devDependencies": {
+    "electron": "^31.7.7",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "com.example.forexchart.desktop",
+    "productName": "Forex Chart",
+    "directories": { "output": "dist" },
+    "files": ["main.js", "app/**/*"],
+    "win": { "target": ["portable"], "icon": "app/icon-512.png" },
+    "portable": { "artifactName": "ForexChart-Windows.exe" }
+  }
+}

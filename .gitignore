@@ -3,3 +3,6 @@ android
 server/alerts.json
 mt5-bridge/*.json
 mt5-bridge/__pycache__/
+desktop/app/
+desktop/dist/
+desktop/node_modules/
