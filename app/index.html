@@ -587,7 +587,7 @@ function setRows(rows,live,src,dg){SRCL=live?(src||'Live'):'Sample';
 async function loadSymbol(sym,first){
   const my=++LOADSEQ;LOADING=true;try{LCTL&&LCTL.abort()}catch(e){}LCTL=new AbortController();
   if(!first)saveState();
-  stopReplay();PEND=[];drawPend();LPX=null;MT5.ticks=[];DERR='';levels.forEach(l=>{try{candles.removePriceLine(l)}catch(e){}});levels=[];SYM=sym;$('symb').textContent=sym+' ▾';
+  stopReplay();PEND=[];drawPend();LPX=null;MT5.ticks=[];DERR='';levels.forEach(l=>{try{candles.removePriceLine(l)}catch(e){}});levels=[];SYM=sym;$('symb').textContent=sym+' ▾';if(MT5.ok)startSSE();
   let s={};try{s=JSON.parse(localStorage.getItem('fx_s_'+sym)||'{}')||{}}catch(e){}
   DR.items=Array.isArray(s.dr)?s.dr:[];DR.sel=null;DR.pend=null;DR.grab=0;ALERTS=Array.isArray(s.al)?s.al:[];LP=s.lp??null;
   let ok=false;
@@ -764,7 +764,7 @@ new MutationObserver(oscLayout).observe($('oscs'),{childList:true});
 })();
 const SB=document.createElement('div');SB.id='srcb';SB.style.cssText='position:absolute;top:3px;left:6px;z-index:4;pointer-events:none;font-size:10px;padding:2px 7px;border-radius:6px;color:#fff;direction:rtl;max-width:92%';$('chart').appendChild(SB);
 function badge(){const last=D.length?D[D.length-1]:null,real=SRCL!=='Sample';SB.style.background=real?'#16a34a':'#d97706';
-  SB.textContent=(real?'✓ '+SRCL:'⚠ دیتای نمونه (غیرواقعی)'+(DERR?' — '+DERR:''))+(last?' · آخرین '+last.close.toFixed(DEC)+' @ '+fmtT(last.time)+(tzOff()?'':'Z'):'')+' · v30'}
+  SB.textContent=(real?'✓ '+SRCL:'⚠ دیتای نمونه (غیرواقعی)'+(DERR?' — '+DERR:''))+(last?' · آخرین '+last.close.toFixed(DEC)+' @ '+fmtT(last.time)+(tzOff()?'':'Z'):'')+' · v31'}
 
 // انتخاب خودکار دیتای پایه بر اساس تایم‌فریم
 let CURTF=null;
@@ -981,6 +981,7 @@ function openSettings(){
 <label class="row"><span class="mut" style="flex:1">رنگ کادر کندل نزولی</span><input type="color" id="s_dnb" value="${c.dnb||c.dn||'#dc2626'}"></label>
 <div class="row"><button id="s_mt4">سبک کندل MT4</button></div><h4>نمایش</h4>
 <label class="row"><span class="mut" style="flex:1">تعداد کندل بارگذاری اولیه (کمتر = سریع‌تر؛ با اسکرول به چپ بیشتر لود می‌شود)</span><select id="s_nl">${[1500,3000,8000,20000].map(n=>`<option value="${n}"${(c.nload||3000)===n?' selected':''}>${n}</option>`).join('')}</select></label>
+<label class="row"><span class="mut" style="flex:1">قیمت زنده سریع (اتصال دائمی به VPS)</span><input type="checkbox" id="s_sse"${c.sse===0?'':' checked'}></label>
 <label class="row"><span class="mut" style="flex:1">خطوط شبکه</span><input type="checkbox" id="s_grid"${c.grid===0?'':' checked'}></label>
 <label class="row"><span class="mut" style="flex:1">برچسب منبع دیتا</span><input type="checkbox" id="s_badge"${c.badge===0?'':' checked'}></label>
 <h4>نمودار</h4>
@@ -1001,7 +1002,7 @@ function openSettings(){
   const apply=()=>{try{localStorage.setItem('fx_set',JSON.stringify(SET))}catch(e){}
     if(SET.theme==='light'||SET.theme==='dark')document.documentElement.dataset.theme=SET.theme;else document.documentElement.removeAttribute('data-theme');
     theme();applyTZ();applyCT();SB.style.display=SET.badge===0?'none':'block'};
-  $('dok').onclick=()=>{SET.up=$('s_up').value;SET.dn=$('s_dn').value;SET.bd=$('s_bd').checked?1:0;SET.upb=$('s_upb').value;SET.dnb=$('s_dnb').value;SET.nload=+$('s_nl').value||3000;if(SET.nload!==NLOAD0)CC.clear();SET.grid=$('s_grid').checked?1:0;SET.badge=$('s_badge').checked?1:0;SET.theme=$('s_theme').value;SET.ct=$('s_ct').value;SET.log=$('s_log').checked?1:0;SET.tz=$('s_tz').value;SET.tzh=+$('s_tzh').value||0;SET.ba=$('s_ba').checked?1:0;SET.snd=$('s_snd').checked?1:0;SET.ring=$('s_ring').checked?1:0;SET.cd=$('s_cd').checked?1:0;SET.dl=$('s_dl').checked?1:0;apply();dl.style.display='none'};
+  $('dok').onclick=()=>{SET.up=$('s_up').value;SET.dn=$('s_dn').value;SET.bd=$('s_bd').checked?1:0;SET.upb=$('s_upb').value;SET.dnb=$('s_dnb').value;SET.nload=+$('s_nl').value||3000;SET.sse=$('s_sse').checked?1:0;if(SET.sse===0)stopSSE();else if(MT5.ok&&!ES)startSSE();if(SET.nload!==NLOAD0)CC.clear();SET.grid=$('s_grid').checked?1:0;SET.badge=$('s_badge').checked?1:0;SET.theme=$('s_theme').value;SET.ct=$('s_ct').value;SET.log=$('s_log').checked?1:0;SET.tz=$('s_tz').value;SET.tzh=+$('s_tzh').value||0;SET.ba=$('s_ba').checked?1:0;SET.snd=$('s_snd').checked?1:0;SET.ring=$('s_ring').checked?1:0;SET.cd=$('s_cd').checked?1:0;SET.dl=$('s_dl').checked?1:0;apply();dl.style.display='none'};
   const NLOAD0=SET.nload||3000;
   $('s_mt4').onclick=()=>{$('s_up').value='#66d600';$('s_dn').value='#ff4422';$('s_upb').value='#1a1a1a';$('s_dnb').value='#1a1a1a';$('s_bd').checked=true};
   $('s_auto').onclick=()=>openAuto();
@@ -1065,14 +1066,33 @@ async function mt5Connect(){
     startMtPoll();return true}
   catch(e){MT5.ok=false;MT5.err=e.message;return false}
 }
+// ===== قیمت زنده با اتصال دائمی (SSE)؛ اگر کار نکند خودکار به پرس‌وجوی دوره‌ای برمی‌گردد =====
+let ES=null,ESBEAT=0;
+const sseAlive=()=>!!ES&&ES.readyState===1&&Date.now()-ESBEAT<7000;
+function stopSSE(){if(ES){try{ES.close()}catch(e){}ES=null}}
+function onTick(tk){
+  MT5.tick=tk;(MT5.ticks=MT5.ticks||[]).push(tk.bid);if(MT5.ticks.length>150)MT5.ticks.shift();
+  if(!rp.on&&D.length&&LIVEMODE()&&!LOADING)applyTick(tk.bid,tk.time);baLines();if(LPOS)trailTick(LPOS.side==='B'?tk.bid:tk.ask);
+}
+function onPos(p){MT5.pos=p.positions;MT5.orders=p.orders;MT5.trails=p.trails||[];Object.assign(MT5.acc,{balance:p.balance,equity:p.equity,profit:p.profit,free:p.free,margin:p.margin,level:p.level});syncLpos()}
+function startSSE(){
+  stopSSE();if(!MT5.ok||typeof EventSource==='undefined'||SET.sse===0)return;
+  const sym=SYM,u=MT5.url.replace(/\/$/,'')+'/api/stream?symbol='+encodeURIComponent(MT5S(sym))+'&platform='+encodeURIComponent(MT5.pf||'mt5')+'&token='+encodeURIComponent(MT5.tok);
+  let es;try{es=new EventSource(u)}catch(e){return}
+  ES=es;ESBEAT=Date.now();
+  es.addEventListener('tick',e=>{ESBEAT=Date.now();if(ES!==es||sym!==SYM)return;try{onTick(JSON.parse(e.data))}catch(x){}});
+  es.addEventListener('pos',e=>{ESBEAT=Date.now();if(ES!==es)return;try{onPos(JSON.parse(e.data))}catch(x){}});
+  es.addEventListener('ka',()=>{ESBEAT=Date.now()});
+  es.addEventListener('err',()=>{ESBEAT=Date.now()});
+}
+document.addEventListener('visibilitychange',()=>{if(!document.hidden&&MT5.ok&&!sseAlive())startSSE()});
 function startMtPoll(){
-  clearInterval(MTT);let n=0;
+  clearInterval(MTT);let n=0;startSSE();
   MTT=setInterval(async()=>{
-    if(!MT5.ok)return;
+    if(!MT5.ok||sseAlive())return;
     try{
-      const sym0=SYM,seq0=LOADSEQ,tk=await mt('/api/tick?symbol='+encodeURIComponent(MT5S(SYM)));if(sym0!==SYM||seq0!==LOADSEQ)return;MT5.tick=tk;(MT5.ticks=MT5.ticks||[]).push(MT5.tick.bid);if(MT5.ticks.length>150)MT5.ticks.shift();
-      if(!rp.on&&D.length&&LIVEMODE()&&!LOADING)applyTick(MT5.tick.bid,MT5.tick.time);baLines();if(LPOS)trailTick(LPOS.side==='B'?MT5.tick.bid:MT5.tick.ask);
-      if(n++%2===0){const p=await mt('/api/positions');MT5.pos=p.positions;MT5.orders=p.orders;MT5.trails=p.trails||[];Object.assign(MT5.acc,{balance:p.balance,equity:p.equity,profit:p.profit,free:p.free,margin:p.margin,level:p.level});syncLpos()}
+      const sym0=SYM,seq0=LOADSEQ,tk=await mt('/api/tick?symbol='+encodeURIComponent(MT5S(SYM)));if(sym0!==SYM||seq0!==LOADSEQ)return;onTick(tk);
+      if(n++%2===0)onPos(await mt('/api/positions'));
     }catch(e){}
   },1500);
 }
@@ -1118,7 +1138,7 @@ function openMT5(){
   $('m_go').onclick=async()=>{const npf=$('m_pf').value;if(npf!==MT5.pf||!MT5.ok){clearInterval(MTT);LPOS=null;MT5.pos=[];MT5.orders=[];MT5.tick=null;MT5.ok=false}MT5.pf=npf;MT5.url=$('m_url').value.trim();MT5.tok=$('m_tok').value.trim();MT5.suf=$('m_suf').value.trim();$('m_st').textContent='در حال اتصال...';
     if(await mt5Connect()){const a=MT5.acc;$('m_st').textContent='✓ '+(a.platform||'MT5')+' متصل: '+a.login+' · '+a.server+' · '+(a.demo?'DEMO':'⚠ REAL')+' · موجودی '+a.balance+' '+a.currency+' · سقف حجم '+a.max_lot+(a.algo===false?'\n⚠ '+HINT27:'');loadSymbol(ALLS.includes(SYM)?SYM:ALLS[0])}
     else{$('m_st').textContent='✗ '+MT5.err;try{const p=await mt('/api/platforms');$('m_st').textContent+='\nوضعیت پل: '+Object.entries(p.platforms).map(([k,v])=>k.toUpperCase()+(v.online?' ✓ آماده':' ✗ وصل نیست')).join(' · ')}catch(e){}}};
-  $('m_off').onclick=()=>{MT5.ok=false;clearInterval(MTT);LPOS=null;MT5.pos=[];MT5.orders=[];try{localStorage.removeItem('fx_mt5')}catch(e){}drawPend();$('m_st').textContent='قطع شد'};
+  $('m_off').onclick=()=>{MT5.ok=false;clearInterval(MTT);stopSSE();LPOS=null;MT5.pos=[];MT5.orders=[];try{localStorage.removeItem('fx_mt5')}catch(e){}drawPend();$('m_st').textContent='قطع شد'};
 }
 
 // ===== امکانات تکمیلی: ساعت، نوع نمودار، خط‌کش، ریسک، مدیریت معامله، لیست قیمت، پشتیبان، ژورنال، هشدار =====

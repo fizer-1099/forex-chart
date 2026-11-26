@@ -8,7 +8,7 @@ import os, time, hmac, threading, json as _json, urllib.request, urllib.error
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone, timedelta
 from email.utils import parsedate_to_datetime
-from flask import Flask, request, jsonify, has_request_context
+from flask import Flask, request, jsonify, has_request_context, Response
 from flask_cors import CORS
 from backends import BErr, make_backend
 
@@ -89,6 +89,8 @@ def _gzip(r):
 def auth():
     if request.method == "OPTIONS":
         return None
+    if request.path == "/api/stream" and hmac.compare_digest(request.args.get("token", ""), TOKEN):
+        return None
     if not hmac.compare_digest(request.headers.get("X-Token", ""), TOKEN):
         return jsonify(error="unauthorized"), 401
 
@@ -162,16 +164,70 @@ def tick():
     return jsonify(t)
 
 
+def _pos_payload(b):
+    ps, os_ = b.positions()
+    a = b.account()
+    if a is None:
+        raise BErr(f"{b.name} آماده نیست", 503)
+    pf = b.name.lower()
+    return dict(positions=ps, orders=os_, balance=a["balance"], equity=a["equity"], profit=a["profit"],
+                free=a["free"], margin=a["margin"], level=a["level"],
+                trails=[dict(ticket=t["ticket"], dist=t["dist"]) for t in TRAILS if t["pf"] == pf])
+
+
 @app.get("/api/positions")
 def positions():
-    ps, os_ = BE.positions()
-    a = BE.account()
-    if a is None:
-        return jsonify(error=f"{BE.name} آماده نیست"), 503
-    pf = BE.name.lower()
-    return jsonify(positions=ps, orders=os_, balance=a["balance"], equity=a["equity"], profit=a["profit"],
-                   free=a["free"], margin=a["margin"], level=a["level"],
-                   trails=[dict(ticket=t["ticket"], dist=t["dist"]) for t in TRAILS if t["pf"] == pf])
+    return jsonify(_pos_payload(_cur()))
+
+
+STREAMS = {"n": 0}
+
+
+@app.get("/api/stream")
+def stream():
+    """قیمت زنده و پوزیشن‌ها به‌صورت Server-Sent Events (بدون پرس‌وجوی مکرر)."""
+    sym = request.args["symbol"]
+    b = _cur()
+    if STREAMS["n"] >= 8:
+        return jsonify(error="تعداد اتصال‌های زنده زیاد است"), 429
+
+    def gen():
+        STREAMS["n"] += 1
+        try:
+            yield "retry: 3000\n\n"
+            last_t, last_p, t_pos, t_ka = None, "", 0.0, time.time()
+            while True:
+                now = time.time()
+                try:
+                    t = b.tick(sym)
+                except BErr as e:
+                    yield "event: err\ndata: " + _json.dumps(dict(error=e.msg), ensure_ascii=False) + "\n\n"
+                    t_ka = time.time()
+                    time.sleep(2)
+                    continue
+                if t:
+                    key = (t["bid"], t["ask"], t["time"])
+                    if key != last_t:
+                        last_t, t_ka = key, now
+                        yield "event: tick\ndata: " + _json.dumps(t) + "\n\n"
+                if now - t_pos >= 1.0:
+                    t_pos = now
+                    try:
+                        js = _json.dumps(_pos_payload(b), ensure_ascii=False)
+                        if js != last_p:
+                            last_p, t_ka = js, now
+                            yield "event: pos\ndata: " + js + "\n\n"
+                    except BErr:
+                        pass
+                if now - t_ka >= 4:
+                    t_ka = now
+                    yield "event: ka\ndata: 1\n\n"
+                time.sleep(0.1)
+        finally:
+            STREAMS["n"] -= 1
+
+    return Response(gen(), mimetype="text/event-stream",
+                    headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no", "Connection": "keep-alive"})
 
 
 @app.post("/api/order")
@@ -1585,9 +1641,9 @@ if __name__ == "__main__":
     if EA_PORT and EA_PORT != PORT and "mt4" in BACKENDS:
         try:
             print(f"پل روی 127.0.0.1:{PORT} و برای اکسپرت MT4 روی 127.0.0.1:{EA_PORT} گوش می‌دهد")
-            serve(app, listen=f"127.0.0.1:{PORT} 127.0.0.1:{EA_PORT}", threads=16)
+            serve(app, listen=f"127.0.0.1:{PORT} 127.0.0.1:{EA_PORT}", threads=32)
         except OSError as e:
             print(f"پورت {EA_PORT} در دسترس نیست ({e}). فقط روی {PORT} اجرا می‌شود؛ اکسپرت MT4 کار نخواهد کرد مگر EA_PORT را روی پورت آزاد 80 یا 443 بگذارید.")
-            serve(app, host="127.0.0.1", port=PORT, threads=16)
+            serve(app, host="127.0.0.1", port=PORT, threads=32)
     else:
-        serve(app, host="127.0.0.1", port=PORT, threads=16)
+        serve(app, host="127.0.0.1", port=PORT, threads=32)
