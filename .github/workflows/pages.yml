@@ -3,6 +3,9 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+concurrency:
+  group: pages
+  cancel-in-progress: false
 permissions:
   contents: read
   pages: write
@@ -15,6 +18,14 @@ jobs:
       url: ${{ steps.d.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Bundle chart library (offline, faster start)
+        run: |
+          npm install --no-save --no-audit --no-fund lightweight-charts@4.1.3 || true
+          F=node_modules/lightweight-charts/dist/lightweight-charts.standalone.production.js
+          if [ -f "$F" ]; then cp "$F" app/lw.js && node tools/vendor-lw.js app/index.html; else echo "chart library not found; using CDN"; fi
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

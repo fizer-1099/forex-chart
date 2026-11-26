@@ -529,7 +529,7 @@ chart.subscribeClick(p=>{
   const pr=candles.coordinateToPrice(p.point.y);if(pr==null)return;
   const c=$('drc').value,k=DR.tool,N=TOOLS[k].pts;
   if(k==='alert')addAlert(pr);
-  else if(N===1){const it={k,t1:p.time,p1:pr,c};if(k==='text'){const tx=prompt('متن:');if(!tx)return;it.txt=tx}DR.items.push(it)}
+  else if(N===1){const it={k,t1:p.time,p1:pr,c};if(k==='text'){askText('متن:').then(tx=>{if(!tx)return;it.txt=tx;DR.items.push(it);saveState();drawPrim.rq&&drawPrim.rq()});return}DR.items.push(it)}
   else{const q=DR.pend||(DR.pend={k,c,n:0});q.n++;q['t'+q.n]=p.time;q['p'+q.n]=pr;
     if(q.n>=N){delete q.n;DR.items.push(q);DR.pend=null;$('info').textContent=''}else $('info').textContent='نقطه '+(q.n+1)+' را لمس کنید'}
   saveState();drawPrim.rq&&drawPrim.rq();
@@ -651,6 +651,17 @@ async function binanceRows(sym,tf,days){
     if(!Array.isArray(r)||!r.length)break;r.forEach(k=>out.push({time:k[0]/1000,open:+k[1],high:+k[2],low:+k[3],close:+k[4]}));t=r[r.length-1][0]+1;if(r.length<1000)break}
   return out;
 }
+function askText(msg,def){return new Promise(res=>{
+  const o=document.createElement('div');o.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:99999;display:flex;align-items:center;justify-content:center;padding:16px';
+  const b=document.createElement('div');b.style.cssText='background:var(--bg);color:var(--fg);border:1px solid var(--bd);border-radius:14px;padding:16px;max-width:420px;width:100%;direction:rtl;font-size:14px';
+  const m=document.createElement('div');m.style.cssText='margin-bottom:10px;white-space:pre-wrap;line-height:1.8';m.textContent=msg;
+  const i=document.createElement('input');i.value=def==null?'':def;i.style.cssText='width:100%;box-sizing:border-box;font-size:16px';
+  const r=document.createElement('div');r.style.cssText='display:flex;gap:8px;justify-content:flex-end;margin-top:12px';
+  const c=document.createElement('button');c.textContent='لغو';const k=document.createElement('button');k.textContent='تأیید';
+  const done=v=>{o.remove();res(v)};
+  c.onclick=()=>done(null);k.onclick=()=>done(i.value);o.onclick=e=>{if(e.target===o)done(null)};
+  i.onkeydown=e=>{if(e.key==='Enter')done(i.value);if(e.key==='Escape')done(null)};
+  r.append(c,k);b.append(m,i,r);o.append(b);document.body.appendChild(o);setTimeout(()=>{i.focus();i.select()},50)})}
 async function mtS(path,signal){
   const r=await fetch(MT5.url.replace(/\/$/,'')+path,{headers:{'X-Token':MT5.tok,'X-Platform':MT5.pf||'mt5'},signal});
   const j=await r.json();if(!r.ok)throw new Error(j.error||('HTTP '+r.status));return j;
@@ -661,6 +672,21 @@ function mergeTail(raw){
     if(i>=0&&base[i].time===r.time)base[i]=r;else if(i===base.length-1)base.push(r);else base.splice(i+1,0,r)}
   render(false);
 }
+let TAILT=0,TAILBUSY=false;
+async function refreshTail(force){
+  if(TAILBUSY||!MT5.ok||rp.on||LOADING||!base.length||!LIVEMODE())return;
+  if(!force&&Date.now()-TAILT<8000)return;
+  TAILT=Date.now();TAILBUSY=true;const my=LOADSEQ;
+  try{
+    const tf0=localStorage.getItem('h_tf')||'m15',j=await mt('/api/candles?symbol='+encodeURIComponent(MT5S(SYM))+'&tf='+tf0+'&n=300');
+    if(my!==LOADSEQ||!j.rows||!j.rows.length)return;
+    if(j.rows[0][0]-base[base.length-1].time>baseSec*1.5){loadSymbol(SYM);return}   // فاصله بزرگ‌تر از ۳۰۰ کندل: بارگذاری کامل
+    mergeTail(j.rows);
+  }catch(e){}finally{TAILBUSY=false}
+}
+document.addEventListener('visibilitychange',()=>{if(!document.hidden)setTimeout(()=>refreshTail(true),400)});
+window.addEventListener('focus',()=>setTimeout(()=>refreshTail(false),400));
+window.addEventListener('online',()=>setTimeout(()=>refreshTail(true),800));
 async function loadOlder(){
   if(LOADMORE||LOADING||rp.on||!MT5.ok||!LIVEMODE()||!D.length)return;
   const tf0=localStorage.getItem('h_tf')||'m15',key=MT5.pf+'|'+SYM+'|'+tf0;
@@ -706,14 +732,14 @@ async function fetchSym(sym,first){
 async function fetchTD(sym,first){
   const my=LOADSEQ;const iv=localStorage.getItem('td_iv')||'15min';let j;
   if(SRV)j=await(await fetch(`${SRV}/api/candles?symbol=${encodeURIComponent(sym)}&interval=${iv}`)).json();
-  else{let key=localStorage.getItem('td_key');if(!key){if(first){DERR='سرور یا کلید Twelve Data تنظیم نشده';return false}key=prompt('Twelve Data API key (twelvedata.com):');if(!key)return false;localStorage.setItem('td_key',key)}
+  else{let key=localStorage.getItem('td_key');if(!key){if(first){DERR='سرور یا کلید Twelve Data تنظیم نشده';return false}key=await askText('Twelve Data API key (twelvedata.com):');if(!key)return false;localStorage.setItem('td_key',key)}
     const q=/^[A-Z]{6}$/.test(sym)?sym.slice(0,3)+'/'+sym.slice(3):sym;
     j=await(await fetch(`https://api.twelvedata.com/time_series?symbol=${encodeURIComponent(q)}&interval=${iv}&outputsize=5000&timezone=UTC&apikey=${key}`)).json()}
   if(!j.values){DERR=j.message||'خطا در دریافت دیتا';alert(DERR);return false}
   const rows=j.values.reverse().map(v=>({time:Date.parse(v.datetime.replace(' ','T')+(v.datetime.length<=10?'T00:00:00':'')+'Z')/1000,open:+v.open,high:+v.high,low:+v.low,close:+v.close})).filter(x=>!isNaN(x.time));
   if(my!==LOADSEQ)return true;if(rows.length<10)return false;setRows(rows,true,'Twelve Data');return true;
 }
-$('apib').onclick=()=>{const t=prompt('تایم‌فریم پایه دیتا: s30 m1 m5 m15 m30 h1 h4 d1',localStorage.getItem('h_tf')||'m15');if(!t)return;const d=prompt('چند روز گذشته؟ (مثلاً 30 یا 365 یا 1500)',localStorage.getItem('h_days')||'30');if(!d)return;localStorage.setItem('h_tf',t);localStorage.setItem('h_days',d);const m={s30:'1min',m1:'1min',m5:'5min',m15:'15min',m30:'30min',h1:'1h',h4:'4h',d1:'1day'};localStorage.setItem('td_iv',m[t]||'15min');loadSymbol(SYM)};
+$('apib').onclick=async()=>{const t=await askText('تایم‌فریم پایه دیتا: s30 m1 m5 m15 m30 h1 h4 d1',localStorage.getItem('h_tf')||'m15');if(!t)return;const d=await askText('چند روز گذشته؟ (مثلاً 30 یا 365 یا 1500)',localStorage.getItem('h_days')||'30');if(!d)return;localStorage.setItem('h_tf',t);localStorage.setItem('h_days',d);const m={s30:'1min',m1:'1min',m5:'5min',m15:'15min',m30:'30min',h1:'1h',h4:'4h',d1:'1day'};localStorage.setItem('td_iv',m[t]||'15min');loadSymbol(SYM)};
 (()=>{const b=document.createElement('button');b.textContent='🔔 اعلان پس‌زمینه';b.onclick=enablePush;$('al').insertBefore(b,$('all'))})();
 if('serviceWorker' in navigator)navigator.serviceWorker.register('sw.js').catch(()=>{});
 
@@ -738,7 +764,7 @@ new MutationObserver(oscLayout).observe($('oscs'),{childList:true});
 })();
 const SB=document.createElement('div');SB.id='srcb';SB.style.cssText='position:absolute;top:3px;left:6px;z-index:4;pointer-events:none;font-size:10px;padding:2px 7px;border-radius:6px;color:#fff;direction:rtl;max-width:92%';$('chart').appendChild(SB);
 function badge(){const last=D.length?D[D.length-1]:null,real=SRCL!=='Sample';SB.style.background=real?'#16a34a':'#d97706';
-  SB.textContent=(real?'✓ '+SRCL:'⚠ دیتای نمونه (غیرواقعی)'+(DERR?' — '+DERR:''))+(last?' · آخرین '+last.close.toFixed(DEC)+' @ '+fmtT(last.time)+(tzOff()?'':'Z'):'')+' · v29'}
+  SB.textContent=(real?'✓ '+SRCL:'⚠ دیتای نمونه (غیرواقعی)'+(DERR?' — '+DERR:''))+(last?' · آخرین '+last.close.toFixed(DEC)+' @ '+fmtT(last.time)+(tzOff()?'':'Z'):'')+' · v30'}
 
 // انتخاب خودکار دیتای پایه بر اساس تایم‌فریم
 let CURTF=null;
@@ -996,6 +1022,7 @@ function applyTick(p,tt){
   if(!base.length)return;
   const now=tt>0?tt:Math.floor(Date.now()/1000),lb=base[base.length-1];
   if(now<lb.time-baseSec*2)return;
+  if(now>=lb.time+baseSec*2){refreshTail(false);return}   // چند کندل جا افتاده؛ از سرور کامل می‌شود
   if(now>=lb.time+baseSec)base.push({time:lb.time+Math.floor((now-lb.time)/baseSec)*baseSec,open:p,high:p,low:p,close:p});
   else{if(p>lb.high)lb.high=p;if(p<lb.low)lb.low=p;lb.close=p}
   const k=key(base[base.length-1].time,tf),b2=D[D.length-1];
@@ -1222,7 +1249,7 @@ function renderJ(){
   if($('jeq'))$('jeq').innerHTML=n?`<svg viewBox="0 0 ${W} ${H}" width="100%" height="60"><polyline fill="none" stroke="var(--ac)" stroke-width="2" points="${pts.map((v,i)=>sx(i).toFixed(1)+','+sy(v).toFixed(1)).join(' ')}"/></svg>`:'';
   $('jtb').innerHTML=trades.map((t,i)=>({t,i})).slice(-30).reverse().map(({t,i})=>`<tr data-i="${i}"><td>${i+1}</td><td>${t.side==='B'?'خرید':'فروش'}</td><td>${t.entry.toFixed(DEC)}</td><td>${t.exit.toFixed(DEC)} ${t.why}</td><td class="${t.pnl>0?'p':'n'}">${t.pips}</td><td class="${t.pnl>0?'p':'n'}">${t.pnl}</td><td>${t.note?'📝':''}</td></tr>`).join('');
 }
-$('jtb').onclick=e=>{const tr=e.target.closest('tr');if(!tr)return;const t=trades[+tr.dataset.i];if(!t)return;const nt=prompt('یادداشت معامله:',t.note||'');if(nt!==null){t.note=nt;save();renderJ()}};
+$('jtb').onclick=async e=>{const tr=e.target.closest('tr');if(!tr)return;const t=trades[+tr.dataset.i];if(!t)return;const nt=await askText('یادداشت معامله:',t.note||'');if(nt!==null){t.note=nt;save();renderJ()}};
 (()=>{const b=document.createElement('button');b.id='jcsv';b.textContent='خروجی CSV';$('jclr').parentNode.appendChild(b);
   b.onclick=async()=>{const c='side,entry,exit,pips,pnl,reason,time,note\n'+trades.map(t=>[t.side,t.entry,t.exit,t.pips,t.pnl,t.why,fmtT(t.xt),'"'+(t.note||'').replace(/"/g,'""')+'"'].join(',')).join('\n');try{await navigator.clipboard.writeText(c);flash('CSV کپی شد')}catch(e){const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([c],{type:'text/csv'}));a.download='journal.csv';a.click()}}})();
 // هشدار پیشرفته (جایگزین)
@@ -1433,7 +1460,7 @@ function posSheet(p){
 <div class="ar"><span>حد ضرر:</span><span dir="ltr">${p.sl||'—'}</span></div><div class="ar"><span>حد سود:</span><span dir="ltr">${p.tp||'—'}</span></div><div class="ar"><span>سواپ:</span><span dir="ltr">${fm(p.swap)}</span></div>
 <button class="tl" id="d1">بستن پوزیشن</button><button class="tl" id="d2">بستن بخشی از حجم</button><button class="tl" id="d3">ویرایش پوزیشن</button><button class="tl" id="d4">سفارش جدید</button><button class="tl" id="d5">نمودار</button><button class="tl" id="d6">عملیات فله‌ای…</button>`,s=>{
     $('d1').onclick=()=>{if(confirm('بستن پوزیشن #'+p.ticket+'؟'))act(()=>mt('/api/close',{ticket:p.ticket}),'پوزیشن بسته شد')};
-    $('d2').onclick=()=>{const v=+prompt('چند لات بسته شود؟ (حداکثر '+p.lots+')',(p.lots/2).toFixed(2));if(v>0)act(()=>mt('/api/close',{ticket:p.ticket,volume:v}),'بخشی از حجم بسته شد')};
+    $('d2').onclick=async()=>{const v=+(await askText('چند لات بسته شود؟ (حداکثر '+p.lots+')',(p.lots/2).toFixed(2)));if(v>0)act(()=>mt('/api/close',{ticket:p.ticket,volume:v}),'بخشی از حجم بسته شد')};
     $('d3').onclick=()=>editSheet(p,'pos');
     $('d4').onclick=()=>{s.style.display='none';closeAcc();loadSymbol(p.symbol).then(()=>openTP())};
     $('d5').onclick=()=>{s.style.display='none';closeAcc();loadSymbol(p.symbol)};

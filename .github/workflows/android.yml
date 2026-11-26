@@ -2,7 +2,7 @@ name: Android APK
 on:
   push:
     branches: [main]
-    paths: ['app/**', 'capacitor.config.json', 'package.json']
+    paths: ['app/**', 'capacitor.config.json', 'package.json', 'tools/**']
   workflow_dispatch:
 permissions:
   contents: write
@@ -19,6 +19,11 @@ jobs:
           distribution: temurin
           java-version: 17
       - run: npm install
+      - name: Bundle chart library (offline, faster start)
+        run: |
+          npm install --no-save --no-audit --no-fund lightweight-charts@4.1.3 || true
+          F=node_modules/lightweight-charts/dist/lightweight-charts.standalone.production.js
+          if [ -f "$F" ]; then cp "$F" app/lw.js && node tools/vendor-lw.js app/index.html; else echo "chart library not found; using CDN"; fi
       - run: npx cap add android && npx cap sync android
       - run: cd android && chmod +x gradlew && ./gradlew assembleDebug
       - name: Publish release
