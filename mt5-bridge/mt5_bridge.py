@@ -64,6 +64,27 @@ def _berr(e):
     return jsonify(error=e.msg), e.code
 
 
+@app.after_request
+def _gzip(r):
+    """پاسخ‌های JSON بزرگ (کندل‌ها) فشرده می‌شوند تا بارگذاری سریع‌تر شود."""
+    try:
+        if (r.status_code != 200 or r.direct_passthrough or r.mimetype != "application/json" or "Content-Encoding" in r.headers
+                or "gzip" not in request.headers.get("Accept-Encoding", "")):
+            return r
+        data = r.get_data()
+        if len(data) < 4096:
+            return r
+        import gzip
+        z = gzip.compress(data, compresslevel=3)
+        r.set_data(z)
+        r.headers["Content-Encoding"] = "gzip"
+        r.headers["Content-Length"] = str(len(z))
+        r.headers["Vary"] = "Accept-Encoding"
+    except Exception:
+        pass
+    return r
+
+
 @app.before_request
 def auth():
     if request.method == "OPTIONS":
@@ -183,6 +204,9 @@ def order():
         price = t["ask"] if side == "B" else t["bid"]
     if (side == "B" and sl >= price) or (side == "S" and sl <= price):
         return jsonify(error="SL در سمت اشتباه است"), 400
+    why = _rules_check(BE, sym, lots, abs(price - sl), info, manual=True)
+    if why:
+        return jsonify(error="قوانین ریسک: " + why), 403
     if tp and ((side == "B" and tp <= price) or (side == "S" and tp >= price)):
         return jsonify(error="TP در سمت اشتباه است"), 400
     return jsonify(BE.order(sym, side, typ, lots, price, sl, tp))
@@ -918,7 +942,9 @@ def _side_fa(p):
 def _notify_open(k, p):
     if not _tg_on("notify_open"):
         return
-    lines = ["📈 <b>معامله باز شد</b>", f"{p['symbol']} · {_side_fa(p)} · {p['lots']} لات · {BACKENDS[k].name} #{p['ticket']}",
+    tag = AUTOTAG.pop((k, p["ticket"]), None)
+    lines = ["🤖 <b>معامله خودکار باز شد</b>" if tag else "📈 <b>معامله باز شد</b>",
+             f"{p['symbol']} · {_side_fa(p)} · {p['lots']} لات · {BACKENDS[k].name} #{p['ticket']}",
              f"قیمت ورود: {p['price']}"]
     lv = []
     if p.get("sl"):
@@ -927,6 +953,8 @@ def _notify_open(k, p):
         lv.append(f"TP: {p['tp']}")
     if lv:
         lines.append(" · ".join(lv))
+    if tag:
+        lines.append("دلیل: " + tag)
     tg_send("\n".join(lines))
 
 
@@ -1062,12 +1090,469 @@ def closes_step():
     PENDING_CL[:] = keep
 
 
+# ===================== هشدار برخورد قیمت به EMA / SMA (جایگزین اکسپرت EMA_MultiPair_Alert) =====================
+# روی کندل بسته‌شده‌ی آخر هر نماد و تایم‌فریم بررسی می‌شود؛ برای هر کندل فقط یک‌بار هشدار می‌دهد.
+EMA_DEF = dict(enabled=False, platform="", symbols="EURUSD,GBPUSD,USDJPY,USDCHF,USDCAD,AUDUSD,NZDUSD",
+               fast=200, slow=1000, interval=30, buffer_on=True, buffer_pips=2.0, sma_on=False, sma=200,
+               tfs=dict(h1=dict(f=False, s=False), h4=dict(f=True, s=True), d1=dict(f=True, s=True),
+                        w1=dict(f=True, s=True)))
+EMA_TFL = {"h1": "1H", "h4": "4H", "d1": "Daily", "w1": "Weekly"}
+EMA_CFG = {}
+EMA_STATE = _load("ema_state.json", {})  # {"init": bool, "sent": {key: barTime}}
+EMA_STATE.setdefault("sent", {})
+EMA_LOG, EMA_ERR, EMA_SEEN = [], {}, {}
+EMA_FORCE = [False]
+emalock = threading.Lock()
+
+
+def _ema_merge(src):
+    c = _json.loads(_json.dumps(EMA_DEF))
+    for k in c:
+        if k == "tfs":
+            for tk in c["tfs"]:
+                t = (src.get("tfs") or {}).get(tk) or {}
+                c["tfs"][tk]["f"] = bool(t.get("f", c["tfs"][tk]["f"]))
+                c["tfs"][tk]["s"] = bool(t.get("s", c["tfs"][tk]["s"]))
+        elif k in src:
+            c[k] = src[k]
+    return c
+
+
+def _ema_valid(d):
+    import re
+    out = _ema_merge(d)
+    syms = [x.strip() for x in str(out["symbols"]).replace("\n", ",").replace(";", ",").split(",") if x.strip()]
+    if len(syms) > 40 or any(not re.fullmatch(r"[A-Za-z0-9._#\-+]{1,32}", x) for x in syms):
+        raise BErr("لیست نمادها نامعتبر است (حداکثر ۴۰ نماد، با کاما جدا کنید)", 400)
+    out["symbols"] = ",".join(syms)
+    for k, lo, hi in (("fast", 2, 5000), ("slow", 2, 5000), ("sma", 2, 5000), ("interval", 10, 3600)):
+        try:
+            out[k] = int(out[k])
+        except Exception:
+            raise BErr(f"مقدار {k} نامعتبر است", 400)
+        if not lo <= out[k] <= hi:
+            raise BErr(f"مقدار {k} باید بین {lo} و {hi} باشد", 400)
+    try:
+        out["buffer_pips"] = float(out["buffer_pips"])
+    except Exception:
+        raise BErr("مقدار بافر نامعتبر است", 400)
+    if not 0 <= out["buffer_pips"] <= 1000:
+        raise BErr("بافر باید بین ۰ و ۱۰۰۰ پیپ باشد", 400)
+    out["enabled"], out["buffer_on"], out["sma_on"] = bool(out["enabled"]), bool(out["buffer_on"]), bool(out["sma_on"])
+    if out["platform"] not in BACKENDS:
+        out["platform"] = ""
+    return out
+
+
+EMA_CFG.update(_ema_merge(_load("ema.json", {})))
+
+
+@app.get("/api/ema")
+def ema_get():
+    c = dict(EMA_CFG)
+    c["platform_eff"] = c["platform"] or DEFAULT.name.lower()
+    return jsonify(cfg=c, log=EMA_LOG[-30:][::-1], errors=EMA_ERR, platforms=list(BACKENDS))
+
+
+@app.post("/api/ema")
+def ema_set():
+    d = request.get_json(force=True)
+    c = _ema_valid(d)
+    with emalock:
+        EMA_CFG.clear()
+        EMA_CFG.update(c)
+        _save("ema.json", c)
+        EMA_SEEN.clear()
+        EMA_FORCE[0] = True
+    return jsonify(ok=1)
+
+
+@app.post("/api/ema/scan")
+def ema_scan():
+    EMA_SEEN.clear()
+    EMA_FORCE[0] = True
+    return jsonify(ok=1)
+
+
+def _ema_last(closes, period):
+    k, e = 2.0 / (period + 1), closes[0]
+    for c in closes[1:]:
+        e = k * c + (1 - k) * e
+    return e
+
+
+def _sma_last(closes, period):
+    return sum(closes[-period:]) / period
+
+
+def _ema_alert(b, sym, tfk, name, level, bt, row, baseline, digits):
+    key = f"{sym}|{tfk}|{name}"
+    if EMA_STATE["sent"].get(key) == bt:
+        return
+    EMA_STATE["sent"][key] = bt
+    if baseline:
+        return
+    txt = f"{sym} | {EMA_TFL[tfk]} | price touched {name}"
+    EMA_LOG.append(dict(t=int(time.time()), sym=sym, tf=EMA_TFL[tfk], name=name, text=txt))
+    del EMA_LOG[:-100]
+    tg_send(f"🔔 <b>{sym} | {EMA_TFL[tfk]}</b>\nقیمت به {name} برخورد کرد\n"
+            f"{name}: {level:.{digits}f} · کندل بسته‌شده: H {row[2]:.{digits}f} / L {row[3]:.{digits}f}"
+            f"\n{b.name}")
+    try:
+        auto_trade_from_alert(b, sym, tfk, name, level, row)
+    except Exception as e:
+        glog(f"معامله خودکار خطا: {e}")
+
+
+def _ema_check(b, sym, tfk, cfg, baseline):
+    t = cfg["tfs"][tfk]
+    want = []
+    if t["f"]:
+        want.append(("EMA", cfg["fast"]))
+    if t["s"]:
+        want.append(("EMA", cfg["slow"]))
+    if cfg["sma_on"] and tfk in ("d1", "w1"):
+        want.append(("SMA", cfg["sma"]))
+    if not want:
+        return
+    d, rows = b.candles(sym, tfk, 3)
+    if len(rows) < 2:
+        return
+    bt = rows[-2][0]
+    if EMA_SEEN.get((sym, tfk)) == bt:
+        return
+    need = max(p for _, p in want)
+    d, rows = b.candles(sym, tfk, min(6000, max(need * 3 + 50, need + 20)))
+    closed = rows[:-1]  # آخرین کندل در حال تشکیل است
+    if len(closed) < 2:
+        return
+    bt, row = closed[-1][0], closed[-1]
+    info = b.symbol_info(sym) or {}
+    digits = info.get("digits", d)
+    pip = 10 ** -digits * (10 if digits in (3, 5) else 1)
+    buf = cfg["buffer_pips"] * pip if cfg["buffer_on"] else 0.0
+    closes = [r[4] for r in closed]
+    for kind, per in want:
+        if len(closed) < per + 1:
+            continue  # تاریخچه کافی نیست
+        lvl = _ema_last(closes, per) if kind == "EMA" else _sma_last(closes, per)
+        if row[3] <= lvl + buf and row[2] >= lvl - buf:
+            _ema_alert(b, sym, tfk, f"{kind}{per}", lvl, bt, row, baseline, digits)
+    EMA_SEEN[(sym, tfk)] = bt
+
+
+def ema_scan_once():
+    cfg = dict(EMA_CFG)
+    pf = cfg["platform"] or DEFAULT.name.lower()
+    b = BACKENDS.get(pf)
+    if b is None:
+        return
+    _tl.be = b
+    try:
+        if b.account() is None:
+            return
+        baseline = not EMA_STATE.get("init")
+        for sym in [x for x in cfg["symbols"].split(",") if x]:
+            for tfk in ("h1", "h4", "d1", "w1"):
+                if not EMA_CFG["enabled"]:
+                    return
+                try:
+                    _ema_check(b, sym, tfk, cfg, baseline)
+                    EMA_ERR.pop(sym, None)
+                except BErr as e:
+                    EMA_ERR[sym] = e.msg
+                except Exception as e:
+                    EMA_ERR[sym] = str(e)[:80]
+        if baseline:
+            EMA_STATE["init"] = True
+        _save("ema_state.json", EMA_STATE)
+    finally:
+        _tl.be = None
+
+
+def ema_loop():
+    last = 0.0
+    while True:
+        time.sleep(1)
+        try:
+            if not EMA_CFG.get("enabled"):
+                continue
+            if EMA_FORCE[0] or time.time() - last >= max(10, EMA_CFG["interval"]):
+                EMA_FORCE[0] = False
+                last = time.time()
+                ema_scan_once()
+        except Exception:
+            pass
+
+
+# ===================== SL/TP خودکار و معامله خودکار (جایگزین بخش‌های اکسپرت EMA_MultiPair_Alert) =====================
+AUTO_DEF = dict(
+    sltp=dict(enabled=False, sl_on=True, tp_on=True, sl_mode="pips", sl_val=20.0, tp_mode="rr", tp_val=2.0, symbols=""),
+    trade=dict(enabled=False, lot_mode="fixed", lot=0.01, risk_pct=1.0, sl_mode="pips", sl_val=20.0, tp_mode="pips",
+               tp_val=40.0, invert=False, one_per_symbol=True, tfs=dict(h1=False, h4=True, d1=True, w1=True)),
+    rules=dict(enabled=True, max_open_on=True, max_open=5, daily_loss_on=True, daily_loss_pct=5.0, max_risk_on=True,
+               max_risk_pct=2.0, apply_manual=False),
+)
+AUTO_CFG = {}
+AUTOTAG, AUTOSLTP_TRIES = {}, {}
+autolock = threading.Lock()
+
+
+def _auto_merge(src):
+    c = _json.loads(_json.dumps(AUTO_DEF))
+    for grp, d in c.items():
+        sg = (src or {}).get(grp) or {}
+        for k, dv in d.items():
+            if k == "tfs":
+                for tk in dv:
+                    dv[tk] = bool((sg.get("tfs") or {}).get(tk, dv[tk]))
+            elif k in sg:
+                d[k] = sg[k]
+    return c
+
+
+def _auto_valid(src):
+    c = _auto_merge(src)
+    def num(grp, k, lo, hi):
+        try:
+            c[grp][k] = float(c[grp][k])
+        except Exception:
+            raise BErr(f"مقدار {k} نامعتبر است", 400)
+        if not lo <= c[grp][k] <= hi:
+            raise BErr(f"مقدار {k} باید بین {lo} و {hi} باشد", 400)
+    for grp in ("sltp", "trade"):
+        for k in ("sl_val", "tp_val"):
+            num(grp, k, 0, 1e7)
+        if c[grp]["sl_mode"] not in ("pips", "usd"):
+            raise BErr("حالت SL نامعتبر است", 400)
+        if c[grp]["tp_mode"] not in ("pips", "usd", "rr"):
+            raise BErr("حالت TP نامعتبر است", 400)
+    import re
+    syms = [x.strip() for x in str(c["sltp"]["symbols"]).replace(";", ",").split(",") if x.strip()]
+    if len(syms) > 40 or any(not re.fullmatch(r"[A-Za-z0-9._#\-+]{1,32}", x) for x in syms):
+        raise BErr("لیست نمادهای SL/TP خودکار نامعتبر است", 400)
+    c["sltp"]["symbols"] = ",".join(syms)
+    t = c["trade"]
+    num("trade", "lot", 0.001, 1000)
+    num("trade", "risk_pct", 0.01, 100)
+    if t["lot_mode"] not in ("fixed", "risk"):
+        raise BErr("حالت حجم نامعتبر است", 400)
+    if t["lot_mode"] == "risk" and t["sl_mode"] == "usd":
+        raise BErr("با حجم بر اساس ریسک، SL باید بر حسب پیپ باشد", 400)
+    if t["enabled"] and t["sl_val"] <= 0:
+        raise BErr("برای معامله خودکار، SL الزامی است", 400)
+    if c["sltp"]["enabled"] and c["sltp"]["sl_on"] and c["sltp"]["sl_val"] <= 0:
+        raise BErr("مقدار SL خودکار باید بیشتر از صفر باشد", 400)
+    r = c["rules"]
+    num("rules", "max_open", 1, 500)
+    num("rules", "daily_loss_pct", 0.1, 100)
+    num("rules", "max_risk_pct", 0.1, 100)
+    r["max_open"] = int(r["max_open"])
+    for grp in c:
+        for k, v in c[grp].items():
+            if isinstance(AUTO_DEF[grp][k], bool):
+                c[grp][k] = bool(v)
+    return c
+
+
+AUTO_CFG.update(_auto_merge(_load("auto.json", {})))
+
+
+@app.get("/api/auto")
+def auto_get():
+    return jsonify(cfg=AUTO_CFG)
+
+
+@app.post("/api/auto")
+def auto_set():
+    c = _auto_valid(request.get_json(force=True))
+    with autolock:
+        AUTO_CFG.clear()
+        AUTO_CFG.update(c)
+        _save("auto.json", c)
+        AUTOSLTP_TRIES.clear()
+    return jsonify(ok=1)
+
+
+def _pipsize(info):
+    d = info["digits"]
+    return 10 ** -d * (10 if d in (3, 5) else 1)
+
+
+def _pipvalue(info):  # دلار به ازای هر پیپ برای ۱ لات
+    ts = info["tick_size"] or 10 ** -info["digits"]
+    return info["tick_value"] * (_pipsize(info) / ts)
+
+
+def _dist(mode, val, info, lots, sl_dist=None):
+    """فاصله قیمتی از مبلغ پیپ / دلار / ریسک به ریوارد"""
+    if mode == "pips":
+        return val * _pipsize(info)
+    if mode == "usd":
+        if not info["tick_value"] or not lots:
+            raise BErr("ارزش تیک نماد معلوم نیست؛ حالت دلار ممکن نیست", 400)
+        return val * info["tick_size"] / (info["tick_value"] * lots)
+    return val * (sl_dist or 0)
+
+
+def _lots_ok(l, info):
+    st = info["volume_step"] or 0.01
+    l = int(l / st + 1e-9) * st
+    l = max(l, info["volume_min"])
+    l = min(l, info["volume_max"], MAX_LOT)
+    return round(l, 3 if st < 0.01 else 2)
+
+
+def _day_pnl(b):
+    now = time.time()
+    lt = time.localtime(now)
+    day0 = time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday, 0, 0, 0, 0, 0, -1))
+    realized = sum(d["profit"] + d["comm"] + d["swap"] + d.get("fee", 0) for d in b.history(int(day0), int(now) + 600))
+    a = b.account()
+    return realized, a["profit"], a["balance"]
+
+
+def _rules_check(b, sym, lots, sl_dist, info, manual=False):
+    r = AUTO_CFG["rules"]
+    if not r["enabled"] or (manual and not r["apply_manual"]):
+        return None
+    a = b.account()
+    if a is None:
+        return None
+    if r["max_open_on"] and len(b.positions()[0]) >= r["max_open"]:
+        return f"تعداد معامله‌های باز به سقف {r['max_open']} رسیده است"
+    if r["max_risk_on"] and sl_dist and info["tick_size"]:
+        risk = lots * sl_dist / info["tick_size"] * info["tick_value"]
+        lim = a["balance"] * r["max_risk_pct"] / 100
+        if risk > lim:
+            return f"ریسک این معامله {risk:.2f} است و از {r['max_risk_pct']}٪ موجودی ({lim:.2f}) بیشتر است"
+    if r["daily_loss_on"]:
+        realized, floating, bal = _day_pnl(b)
+        loss = -(realized + floating)
+        lim = (bal - realized) * r["daily_loss_pct"] / 100
+        if loss >= lim > 0:
+            return f"سقف ضرر روزانه {r['daily_loss_pct']}٪ رسیده است (ضرر امروز {loss:.2f})"
+    return None
+
+
+def _auto_open(b, sym, tfk, name, level, row):
+    t = AUTO_CFG["trade"]
+    g = guard()
+    if g:
+        return g
+    info = b.symbol_info(sym)
+    if info is None:
+        return "نماد پیدا نشد"
+    ps = b.positions()[0]
+    if t["one_per_symbol"] and any(p["symbol"] == sym for p in ps):
+        return "برای این نماد معامله باز وجود دارد"
+    tk = b.tick(sym)
+    if tk is None:
+        return "قیمت نماد در دسترس نیست"
+    side = "S" if row[1] < level else "B"  # مثل اکسپرت قبلی: کندل از زیر EMA آمده ← فروش، از بالا ← خرید
+    if t["invert"]:
+        side = "B" if side == "S" else "S"
+    d = 1 if side == "B" else -1
+    price = tk["ask"] if side == "B" else tk["bid"]
+    a = b.account()
+    if t["lot_mode"] == "risk":
+        pv = _pipvalue(info)
+        if not t["sl_val"] or not pv:
+            return "محاسبه حجم از ریسک ممکن نشد"
+        lots = a["equity"] * t["risk_pct"] / 100 / (t["sl_val"] * pv)
+    else:
+        lots = t["lot"]
+    lots = _lots_ok(lots, info)
+    if lots <= 0:
+        return "حجم نامعتبر"
+    sl_dist = _dist(t["sl_mode"], t["sl_val"], info, lots)
+    tp_dist = _dist(t["tp_mode"], t["tp_val"], info, lots, sl_dist) if t["tp_val"] > 0 else 0
+    if sl_dist <= 0:
+        return "SL الزامی است"
+    why = _rules_check(b, sym, lots, sl_dist, info)
+    if why:
+        return why
+    dg = info["digits"]
+    sl = round(price - d * sl_dist, dg)
+    tp = round(price + d * tp_dist, dg) if tp_dist > 0 else 0
+    r = b.order(sym, side, "mkt", lots, price, sl, tp)
+    AUTOTAG[(b.name.lower(), r["ticket"])] = f"لمس {name} در {EMA_TFL[tfk]}"
+    return None
+
+
+def auto_trade_from_alert(b, sym, tfk, name, level, row):
+    t = AUTO_CFG["trade"]
+    if not t["enabled"] or not t["tfs"].get(tfk):
+        return
+    try:
+        why = _auto_open(b, sym, tfk, name, level, row)
+    except BErr as e:
+        why = e.msg
+    except Exception as e:
+        why = str(e)[:120]
+    if why:
+        tg_send(f"🤖 <b>معامله خودکار انجام نشد</b>\n{sym} · {name} · {EMA_TFL[tfk]}\nدلیل: {why}")
+
+
+def autosltp_step():
+    c = AUTO_CFG["sltp"]
+    if not c["enabled"] or not (c["sl_on"] or c["tp_on"]):
+        return
+    only = {x for x in c["symbols"].split(",") if x}
+    for k, b in list(BACKENDS.items()):
+        _tl.be = b
+        try:
+            if b.account() is None or guard():
+                continue
+            try:
+                ps = b.positions()[0]
+            except BErr:
+                continue
+            for p in ps:
+                if only and p["symbol"] not in only:
+                    continue
+                need_sl, need_tp = c["sl_on"] and not p["sl"], c["tp_on"] and not p["tp"]
+                key = (k, p["ticket"])
+                if not (need_sl or need_tp) or AUTOSLTP_TRIES.get(key, 0) >= 3:
+                    continue
+                try:
+                    info, tk = b.symbol_info(p["symbol"]), b.tick(p["symbol"])
+                    if not info or not tk:
+                        continue
+                    AUTOSLTP_TRIES[key] = AUTOSLTP_TRIES.get(key, 0) + 1
+                    d, entry, lots, dg = (1 if p["side"] == "B" else -1), p["price"], p["lots"], info["digits"]
+                    cur = tk["bid"] if d == 1 else tk["ask"]
+                    sl, tp = p["sl"] or 0, p["tp"] or 0
+                    sl_dist = abs(entry - p["sl"]) if p["sl"] else _dist(c["sl_mode"], c["sl_val"], info, lots)
+                    if need_sl:
+                        sl = round(entry - d * sl_dist, dg)
+                        if (cur - sl) * d <= 0:
+                            sl = round(cur - d * sl_dist, dg)
+                        if sl <= 0:
+                            raise BErr("SL محاسبه‌شده نامعتبر است (فاصله خیلی زیاد)", 400)
+                    if need_tp:
+                        td = _dist(c["tp_mode"], c["tp_val"], info, lots, sl_dist)
+                        if td > 0:
+                            tp = round(entry + d * td, dg)
+                            if (tp - cur) * d <= 0:
+                                tp = round(cur + d * td, dg)
+                    b.modify(p["ticket"], sl, tp)
+                    AUTOSLTP_TRIES[key] = 99
+                    tg_send(f"🛡 <b>SL/TP خودکار گذاشته شد</b>\n{p['symbol']} · {'خرید' if d == 1 else 'فروش'} · {lots} لات · {b.name} #{p['ticket']}\n"
+                            f"SL: {sl or '—'} · TP: {tp or '—'}")
+                except BErr as e:
+                    if AUTOSLTP_TRIES[key] >= 3:
+                        tg_send(f"🛡 SL/TP خودکار برای {p['symbol']} #{p['ticket']} ناموفق بود: {e.msg}")
+        finally:
+            _tl.be = None
+
+
 def background_loop():
     n = 0
     while True:
         time.sleep(1)
         n += 1
-        for fn, every in ((trail_step, 1), (closes_step, 2), (talerts_step, 2), (_guard_all, 16)):
+        for fn, every in ((trail_step, 1), (autosltp_step, 3), (closes_step, 2), (talerts_step, 2), (_guard_all, 16)):
             if n % every:
                 continue
             try:
@@ -1095,6 +1580,7 @@ if __name__ == "__main__":
     print("پلتفرم‌های فعال:", ", ".join(k.upper() for k in BACKENDS), "| پیش‌فرض:", DEFAULT.name)
     print("سقف حجم:", MAX_LOT, "| حساب واقعی مجاز:", ALLOW_REAL)
     threading.Thread(target=background_loop, daemon=True).start()
+    threading.Thread(target=ema_loop, daemon=True).start()
     from waitress import serve
     if EA_PORT and EA_PORT != PORT and "mt4" in BACKENDS:
         try:
