@@ -8,7 +8,7 @@ import os, time, hmac, threading, json as _json, urllib.request, urllib.error
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone, timedelta
 from email.utils import parsedate_to_datetime
-from flask import Flask, request, jsonify, has_request_context, Response
+from flask import Flask, request, jsonify, has_request_context, Response, send_from_directory, abort
 from flask_cors import CORS
 from backends import BErr, make_backend
 
@@ -89,6 +89,8 @@ def _gzip(r):
 def auth():
     if request.method == "OPTIONS":
         return None
+    if request.endpoint in ("web_index", "web_file"):
+        return None  # خود فایل‌های اپ (بدون هیچ اطلاعات محرمانه)؛ APIها همچنان توکن می‌خواهند
     if request.path == "/api/stream" and hmac.compare_digest(request.args.get("token", ""), TOKEN):
         return None
     if not hmac.compare_digest(request.headers.get("X-Token", ""), TOKEN):
@@ -123,6 +125,52 @@ def ea_result():
         return jsonify(error="MT4 روی پل فعال نیست (MT_PLATFORM)"), 400
     b.ea_result(request.args["id"], request.args.get("last", "1") == "1", request.get_data().decode("utf-8", "replace"))
     return "ok"
+
+
+# ---- سرو کردن خود اپ از روی پل (برای وقتی github.io در دسترس نیست) ----
+HERE = os.path.dirname(os.path.abspath(__file__))
+APP_DIR = next((d for d in (os.environ.get("APP_DIR"), os.path.join(HERE, "app"), os.path.join(HERE, "..", "app"))
+                if d and os.path.isfile(os.path.join(d, "index.html"))), None)
+WEB_FILES = {"index.html", "sw.js", "manifest.webmanifest", "icon-192.png", "icon-512.png", "lw.js", "config.js"}
+LW_URLS = ("https://cdn.jsdelivr.net/npm/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js",
+           "https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js")
+
+
+def _ensure_lw():
+    """اگر کتابخانه نمودار کنار اپ نیست، یک‌بار دانلود می‌شود تا اپ به CDN بیرونی وابسته نباشد."""
+    if not APP_DIR or os.path.isfile(os.path.join(APP_DIR, "lw.js")):
+        return
+    for u in LW_URLS:
+        try:
+            data = urllib.request.urlopen(urllib.request.Request(u, headers={"User-Agent": "fxapp"}), timeout=25).read()
+            if len(data) > 50000:
+                with open(os.path.join(APP_DIR, "lw.js"), "wb") as f:
+                    f.write(data)
+                print("کتابخانه نمودار دانلود شد (lw.js)")
+                return
+        except Exception:
+            continue
+    print("دانلود کتابخانه نمودار ممکن نشد؛ اپ از CDN استفاده می‌کند")
+
+
+@app.get("/")
+def web_index():
+    if not APP_DIR:
+        return "پوشه app کنار پل پیدا نشد (APP_DIR را در run.bat بگذارید یا پوشه app را کنار mt5-bridge کپی کنید)", 404
+    import re
+    html = open(os.path.join(APP_DIR, "index.html"), encoding="utf-8").read()
+    if os.path.isfile(os.path.join(APP_DIR, "lw.js")):
+        html = re.sub(r'<script src="https://cdnjs\.cloudflare\.com/ajax/libs/lightweight-charts[^"]*"></script>', '<script src="lw.js"></script>', html, count=1)
+    return Response(html, mimetype="text/html", headers={"Cache-Control": "no-cache"})
+
+
+@app.get("/<path:f>")
+def web_file(f):
+    if not APP_DIR or f not in WEB_FILES:
+        abort(404)
+    if f == "index.html":
+        return web_index()
+    return send_from_directory(APP_DIR, f, max_age=0)
 
 
 @app.get("/api/platforms")
@@ -1631,6 +1679,7 @@ def _guard_all():
 
 
 if __name__ == "__main__":
+    _ensure_lw()
     for b in BACKENDS.values():
         b.start()
     print("پلتفرم‌های فعال:", ", ".join(k.upper() for k in BACKENDS), "| پیش‌فرض:", DEFAULT.name)

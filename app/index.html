@@ -764,7 +764,7 @@ new MutationObserver(oscLayout).observe($('oscs'),{childList:true});
 })();
 const SB=document.createElement('div');SB.id='srcb';SB.style.cssText='position:absolute;top:3px;left:6px;z-index:4;pointer-events:none;font-size:10px;padding:2px 7px;border-radius:6px;color:#fff;direction:rtl;max-width:92%';$('chart').appendChild(SB);
 function badge(){const last=D.length?D[D.length-1]:null,real=SRCL!=='Sample';SB.style.background=real?'#16a34a':'#d97706';
-  SB.textContent=(real?'✓ '+SRCL:'⚠ دیتای نمونه (غیرواقعی)'+(DERR?' — '+DERR:''))+(last?' · آخرین '+last.close.toFixed(DEC)+' @ '+fmtT(last.time)+(tzOff()?'':'Z'):'')+' · v31'}
+  SB.textContent=(real?'✓ '+SRCL:'⚠ دیتای نمونه (غیرواقعی)'+(DERR?' — '+DERR:''))+(last?' · آخرین '+last.close.toFixed(DEC)+' @ '+fmtT(last.time)+(tzOff()?'':'Z'):'')+' · v33'}
 
 // انتخاب خودکار دیتای پایه بر اساس تایم‌فریم
 let CURTF=null;
@@ -784,7 +784,7 @@ $('gob').onclick=goLast;
 const OT={mkt:['اجرا در قیمت بازار',0],bl:['بای لیمیت','B'],sl:['سل لیمیت','S'],bs:['بای استاپ','B'],ss:['سل استاپ','S']};
 const OTN={mkt:'MARKET',bl:'BUY LIMIT',sl:'SELL LIMIT',bs:'BUY STOP',ss:'SELL STOP'};
 let DRAFT=null,PEND=[],PL=[],tOT='mkt',MSGT=0;
-const SLT={sig:'',l:{},t:{},ron:null};
+const SLT={sig:'',l:{},t:{},ron:null},GH={sig:'',items:[]};
 let NEWT=false,SELT=0;
 const subj=()=>rp.pos||(NEWT?null:lpos())||DRAFT;
 const lastPx=()=>rp.on?base[rp.i].close:(MT5.ok&&MT5.tick?MT5.tick.bid:(D.length?D[D.length-1].close:0));
@@ -820,7 +820,7 @@ function mkTag(k,col,drag){
   return e;
 }
 function sltLoop(){
-  const p=subj();
+  const TG=[],p=subj();
   const keys=p?((p===DRAFT&&!p.pending)?[]:['en']).concat(p.sl!=null?['sl']:[],p.tp!=null?['tp']:[]):[];
   const sig=(p===DRAFT?'D':'P')+(p?p.type||'':'')+keys.join(',');
   if(sig!==SLT.sig){
@@ -835,10 +835,39 @@ function sltLoop(){
       const pr=k==='en'?p.entry:p[k],y=candles.priceToCoordinate(pr),t=SLT.t[k];
       if(SLT.l[k].options().price!==pr)SLT.l[k].applyOptions({price:pr});
       if(y==null){t.style.display='none';return}
-      const yMin=58,yMax=H-76,ar=y<yMin?'▲ ':(y>yMax?'▼ ':'');t.style.display='block';t.style.top=Math.max(yMin,Math.min(yMax,y))+'px';
+      const yMin=58,yMax=H-76,ar=y<yMin?'▲ ':(y>yMax?'▼ ':'');t.style.display='block';t.style.top=Math.max(yMin,Math.min(yMax,y))+'px';TG.push({el:t,y:Math.max(yMin,Math.min(yMax,y))});
       const pips=(pr-p.entry)*d/PIP;
       t.textContent=ar+(k==='en'?(p===DRAFT?OTN[p.type]+'  '+pr.toFixed(DEC):'ENTRY '+pr.toFixed(DEC)+plTxt(p)):k.toUpperCase()+'  '+(pips>=0?'+':'−')+'$'+Math.abs(pips*PV*p.lots).toFixed(2)+(k==='sl'&&MT5.ok&&MT5.acc&&!rp.on?' ('+(Math.abs(pips*PV*p.lots)/+MT5.acc.equity*100).toFixed(1)+'٪)':'')+'  ·  '+Math.abs(pips).toFixed(1)+'p'+(k==='tp'&&p.sl!=null?'  ·  R:R '+(Math.abs(pr-p.entry)/Math.abs(p.entry-p.sl)).toFixed(1):''));
     });
+  }
+  {
+    // سایر معامله‌های باز همین نماد: ورود / SL / TP هرکدام جدا نمایش داده می‌شود (لمس کادر = انتخاب آن معامله)
+    const H=$('chart').clientHeight,sym=MT5S(SYM),pt=(p&&p.live)?p.ticket:0,gl=(!rp.on&&MT5.ok)?MT5.pos.filter(x=>x.symbol===sym&&x.ticket!==pt).slice(0,6):[];
+    const gs=gl.map(x=>x.ticket+(x.sl?'s':'')+(x.tp?'t':'')).join('|');
+    if(gs!==GH.sig){
+      GH.items.forEach(i=>{try{candles.removePriceLine(i.line)}catch(e){}i.tag.remove()});GH.items=[];GH.sig=gs;
+      gl.forEach(x=>[['en',1],['sl',x.sl],['tp',x.tp]].forEach(([k,v])=>{if(!v)return;
+        const col=k==='sl'?'#dc2626':k==='tp'?'#16a34a':(x.side==='B'?'#2563eb':'#dc2626');
+        const line=candles.createPriceLine({price:k==='en'?x.price:v,color:col,lineWidth:1,lineStyle:k==='en'?1:2,axisLabelVisible:true,title:'#'+String(x.ticket).slice(-4)+' '+(k==='en'?(x.side==='B'?'BUY':'SELL'):k.toUpperCase())});
+        const tag=document.createElement('div');tag.style.cssText='position:absolute;left:6px;z-index:5;padding:5px 10px;border-radius:7px;font-size:11px;font-weight:700;direction:ltr;color:#fff;transform:translateY(-50%);opacity:.88;cursor:pointer;background:'+col;
+        tag.onclick=()=>{SELT=x.ticket;NEWT=false;MTSIG='';syncLpos();if($('trd').style.display==='block')buildTrade()};
+        $('chart').appendChild(tag);GH.items.push({t:x.ticket,k,line,tag})}));
+    }
+    GH.items.forEach(i=>{
+      const x=MT5.pos.find(q=>q.ticket===i.t),pr=x?(i.k==='en'?x.price:x[i.k]):0;
+      if(!x||!pr){i.tag.style.display='none';return}
+      if(i.line.options().price!==pr)i.line.applyOptions({price:pr});
+      const y=candles.priceToCoordinate(pr);if(y==null){i.tag.style.display='none';return}
+      const dir=x.side==='B'?1:-1,usd=(pr-x.price)*dir/PIP*PV*x.lots,yMin=58,yMax=H-76,ar=y<yMin?'▲ ':(y>yMax?'▼ ':'');
+      i.tag.style.display='block';
+      i.tag.textContent=ar+'#'+String(x.ticket).slice(-4)+' '+(i.k==='en'?(x.side==='B'?'BUY ':'SELL ')+x.lots+'  '+(x.profit>=0?'+':'−')+'$'+Math.abs(x.profit).toFixed(2):i.k.toUpperCase()+'  '+(usd>=0?'+':'−')+'$'+Math.abs(usd).toFixed(2));
+      TG.push({el:i.tag,y:Math.max(yMin,Math.min(yMax,y))});
+    });
+    // جلوگیری از روی هم افتادن کادرها
+    const arr=TG.filter(a=>a.el.style.display!=='none').sort((a,b)=>a.y-b.y),GAP=36,mx=H-76;
+    for(let i=1;i<arr.length;i++)if(arr[i].y<arr[i-1].y+GAP)arr[i].y=arr[i-1].y+GAP;
+    if(arr.length&&arr[arr.length-1].y>mx){arr[arr.length-1].y=mx;for(let i=arr.length-2;i>=0;i--)if(arr[i].y>arr[i+1].y-GAP)arr[i].y=arr[i+1].y-GAP}
+    arr.forEach(a=>{a.el.style.top=a.y+'px'});
   }
   if(!rp.on&&PEND.length){PEND=[];drawPend()}
   const tr=$('trd');
