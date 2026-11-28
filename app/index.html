@@ -678,10 +678,14 @@ function swapBase(j,key){
 async function recheckHist(key,my,N,tries){
   if(my!==LOADSEQ||!MT5.ok||rp.on)return;
   try{
+    if(!base.length)return;
     const tf0=localStorage.getItem('h_tf')||'m15';if(key!==MT5.pf+'|'+SYM+'|'+tf0)return;
     const j=await mt('/api/candles?symbol='+encodeURIComponent(MT5S(SYM))+'&tf='+tf0+'&n='+N);
     if(my!==LOADSEQ)return;
-    if(j.rows&&j.rows.length>base.length+5){swapBase(j,key);if(j.rows.length>=N)NOMORE='';return}
+    if(j.rows&&j.rows.length){
+      const f0=Math.max(base[0].time,j.rows[0][0]),cnt=(arr,g)=>arr.reduce((n,x)=>n+(g(x)>=f0?1:0),0);
+      if(j.rows.length>base.length+5||cnt(j.rows,x=>x[0])>cnt(base,x=>x.time)+1){swapBase(j,key);if(j.rows.length>=N)NOMORE='';return}
+    }
     if(tries<2)setTimeout(()=>recheckHist(key,my,N,tries+1),8000);
   }catch(e){}
 }
@@ -704,6 +708,7 @@ async function refreshTail(force){
   }catch(e){}finally{TAILBUSY=false}
 }
 document.addEventListener('visibilitychange',()=>{if(!document.hidden)setTimeout(()=>refreshTail(true),400)});
+setInterval(()=>{if(!document.hidden)refreshTail(false)},30000);   // هر ۳۰ ثانیه آخرین کندل‌ها با سرور تطبیق داده می‌شود
 window.addEventListener('focus',()=>setTimeout(()=>refreshTail(false),400));
 window.addEventListener('online',()=>setTimeout(()=>refreshTail(true),800));
 async function loadOlder(){
@@ -747,7 +752,7 @@ async function fetchSym(sym,first){
         if(j.rows&&j.rows.length>10){const rows=j.rows.map(x=>({time:x[0],open:x[1],high:x[2],low:x[3],close:x[4]}));
           CC.set(key,{rows,digits:j.digits});if(CC.size>14)CC.delete(CC.keys().next().value);NOMORE=j.rows.length<N?key:'';
           setRows(rows,true,label,j.digits);
-          if(j.rows.length<N)setTimeout(()=>recheckHist(key,my,N,0),5000);   // تاریخچه ممکن است هنوز در حال دانلود باشد
+          if(j.rows.length<N||(TFS[tf]||0)<=900)setTimeout(()=>recheckHist(key,my,N,0),5000);   // تاریخچه ممکن است هنوز در حال دانلود باشد (به‌خصوص تایم‌فریم‌های پایین)
           return true}
         lastErr='دیتای خالی';
       }catch(e){if(my!==LOADSEQ)return true;lastErr=e.message}
@@ -797,7 +802,7 @@ new MutationObserver(oscLayout).observe($('oscs'),{childList:true});
 })();
 const SB=document.createElement('div');SB.id='srcb';SB.style.cssText='position:absolute;top:3px;left:6px;z-index:4;pointer-events:none;font-size:10px;padding:2px 7px;border-radius:6px;color:#fff;direction:rtl;max-width:92%';$('chart').appendChild(SB);
 function badge(){const last=D.length?D[D.length-1]:null,real=SRCL!=='Sample';SB.style.background=real?'#16a34a':'#d97706';
-  SB.textContent=(real?'✓ '+SRCL:'⚠ دیتای نمونه (غیرواقعی)'+(DERR?' — '+DERR:''))+(last?' · آخرین '+last.close.toFixed(DEC)+' @ '+fmtT(last.time)+(tzOff()?'':'Z'):'')+' · v34'}
+  SB.textContent=(real?'✓ '+SRCL:'⚠ دیتای نمونه (غیرواقعی)'+(DERR?' — '+DERR:''))+(last?' · آخرین '+last.close.toFixed(DEC)+' @ '+fmtT(last.time)+(tzOff()?'':'Z'):'')+' · v35'}
 
 // انتخاب خودکار دیتای پایه بر اساس تایم‌فریم
 let CURTF=null;
@@ -1033,7 +1038,7 @@ function openTF(){
 }
 function openMenu(){
   const dl=$('dlg');
-  const it=[['Replay',()=>qs('rp')],['ژورنال معاملات',()=>qs('jr')],['ریسک و حجم',()=>qs('rk')],['+ سطح افقی',()=>$('lvl').click()],['پاک‌کردن سطوح',()=>$('clr').click()],['بارگذاری CSV',()=>$('csvb').click()],['دیتای زنده و تاریخچه',()=>$('apib')&&$('apib').click()],['اتصال MT4 / MT5 (VPS)'+(MT5.ok?' ✓ '+(MT5.acc&&MT5.acc.platform||''):''),openMT5],[MT5.ok?'قیمت زنده: همیشه فعال ('+(MT5.acc&&MT5.acc.platform||'MT5')+')':'قیمت زنده (Twelve Data): '+(LIVE?'روشن':'خاموش'),toggleLive],['حساب و معاملات',openAcc],['لیست قیمت‌ها',openWatch],['ساعت بازارها',openMkt],['اخبار و تقویم اقتصادی',openNews],['تحلیل هوشمند (AI)',openAI],['محافظ اخبار مهم',openGuard],['هشدار EMA (چند جفت‌ارز)',openEMA],['معامله و SL/TP خودکار',openAuto],['ربات تلگرام',openTG],['پشتیبان‌گیری و بازیابی',openBackup],['تمام‌صفحه',toggleFS],['تنظیمات چارت',openSettings]];
+  const it=[['Replay',()=>qs('rp')],['ژورنال معاملات',()=>qs('jr')],['ریسک و حجم',()=>qs('rk')],['+ سطح افقی',()=>$('lvl').click()],['پاک‌کردن سطوح',()=>$('clr').click()],['بارگذاری دوباره دیتای این نماد',()=>{CC.clear();loadSymbol(SYM)}],['بارگذاری CSV',()=>$('csvb').click()],['دیتای زنده و تاریخچه',()=>$('apib')&&$('apib').click()],['اتصال MT4 / MT5 (VPS)'+(MT5.ok?' ✓ '+(MT5.acc&&MT5.acc.platform||''):''),openMT5],[MT5.ok?'قیمت زنده: همیشه فعال ('+(MT5.acc&&MT5.acc.platform||'MT5')+')':'قیمت زنده (Twelve Data): '+(LIVE?'روشن':'خاموش'),toggleLive],['حساب و معاملات',openAcc],['لیست قیمت‌ها',openWatch],['ساعت بازارها',openMkt],['اخبار و تقویم اقتصادی',openNews],['تحلیل هوشمند (AI)',openAI],['محافظ اخبار مهم',openGuard],['هشدار EMA (چند جفت‌ارز)',openEMA],['معامله و SL/TP خودکار',openAuto],['ربات تلگرام',openTG],['پشتیبان‌گیری و بازیابی',openBackup],['تمام‌صفحه',toggleFS],['تنظیمات چارت',openSettings]];
   dl.innerHTML='<div class="row" style="justify-content:space-between"><button id="dcl">←</button><b>منو</b></div>'+it.map((x,i)=>`<button class="tl" data-i="${i}">${x[0]}</button>`).join('');
   dl.style.display='block';$('dcl').onclick=()=>dl.style.display='none';
   dl.querySelectorAll('[data-i]').forEach(b=>b.onclick=()=>{dl.style.display='none';it[+b.dataset.i][1]()});
@@ -1873,7 +1878,7 @@ function pbUpdate(){
   if(!p||PBOFF||sheet){pbar.style.display='none';PBSIG='';return}
   if(key!==PBSIG){
     PBSIG=key;
-    pbar.innerHTML='<div class="row" style="justify-content:space-between;flex-wrap:nowrap"><b id="pbt" dir="ltr" style="font-size:13px"></b><span style="display:flex;gap:4px"><button id="pb_acc">📋</button><button id="pb_x">▾</button></span></div><div class="row" style="flex-wrap:nowrap;overflow-x:auto;margin-top:4px"><button id="pb_rf">ریسک‌فری</button><button id="pb_hf">بستن ½</button><button id="pb_tr">تریلینگ: خاموش</button><button id="pb_cl">بستن</button><button id="pb_all">بستن همه</button></div>';
+    pbar.innerHTML='<div class="row" style="justify-content:space-between;flex-wrap:nowrap"><b id="pbt" dir="ltr" style="font-size:13px"></b><span style="display:flex;gap:4px"><button id="pb_acc">📋</button><button id="pb_x">▾</button></span></div><div id="pb_ls" class="row" style="flex-wrap:nowrap;overflow-x:auto;margin-top:4px;display:none"></div><div class="row" style="flex-wrap:nowrap;overflow-x:auto;margin-top:4px"><button id="pb_rf">ریسک‌فری</button><button id="pb_hf">بستن ½</button><button id="pb_tr">تریلینگ: خاموش</button><button id="pb_cl">بستن</button><button id="pb_all">بستن همه</button></div>';
     $('pb_rf').onclick=riskFree;$('pb_hf').onclick=halfClose;$('pb_tr').onclick=toggleTrail;$('pb_all').onclick=closeAll;$('pb_acc').onclick=()=>openAcc();
     $('pb_x').onclick=()=>{PBOFF=true;pbUpdate()};
     $('pb_cl').onclick=()=>{if(lpos())liveClose();else if(rp.pos){closePos(base[rp.i].close,'MAN');status()}};
@@ -1881,6 +1886,17 @@ function pbUpdate(){
   pbar.style.display='block';
   const n=MT5.ok&&!rp.on?MT5.pos.filter(x=>x.symbol===MT5S(SYM)).length:1,v=pbPL(p),t=$('pbt');
   t.textContent=(p.side==='B'?'BUY ':'SELL ')+(+p.lots).toFixed(2)+' '+SYM+(n>1?' (+'+(n-1)+')':'')+'   '+(v>=0?'+':'')+v.toFixed(2)+'$';t.style.color=v>=0?'#16a34a':'#dc2626';
+  {const lps=MT5.ok&&!rp.on?MT5.pos.filter(x=>x.symbol===MT5S(SYM)):[],ls=$('pb_ls');
+    if(ls){
+      if(!lps.length)ls.style.display='none';
+      else{
+        ls.style.display='flex';const sg=lps.map(x=>x.ticket).join(',');
+        if(sg!==ls.dataset.sg){ls.dataset.sg=sg;ls.innerHTML=lps.map(x=>'<button data-t="'+x.ticket+'" style="white-space:nowrap;flex:none"></button>').join('')+'<button id="pb_new" style="white-space:nowrap;flex:none">+ معامله جدید</button>';
+          ls.querySelectorAll('[data-t]').forEach(b=>b.onclick=()=>{SELT=+b.dataset.t;NEWT=false;MTSIG='';syncLpos();pbUpdate()});
+          $('pb_new').onclick=()=>{if($('trd').style.display!=='block')openTrade();NEWT=true;mkDraft();buildTrade()}}
+        ls.querySelectorAll('[data-t]').forEach(b=>{const x=lps.find(q=>String(q.ticket)===b.dataset.t);if(!x)return;const pv=+x.profit||0;b.textContent='#'+String(x.ticket).slice(-4)+' '+(x.side==='B'?'BUY':'SELL')+' '+x.lots+' '+(pv>=0?'+':'')+pv.toFixed(2)+'$';b.className=x.ticket===p.ticket?'on':'';b.style.color=pv>=0?'#16a34a':'#dc2626'});
+      }
+    }}
   trLabels();
 }
 setInterval(pbUpdate,500);
