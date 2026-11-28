@@ -303,6 +303,37 @@ void Exec(string id, string cmd, string &p[], int k)
   }
 //+------------------------------------------------------------------+
 //+------------------------------------------------------------------+
+//+------------------------------------------------------------------+
+//| صبر برای دانلود تاریخچه: MT4 اولین بار برای یک نماد/تایم‌فریم ناقص برمی‌گرداند |
+//+------------------------------------------------------------------+
+int WaitHistory(string sym, int tf, int need)
+  {
+   int bars = 0;
+   for(int k = 0; k < 16; k++)
+     {
+      ResetLastError();
+      datetime t0 = iTime(sym, tf, 0);
+      int e = GetLastError();
+      bars = iBars(sym, tf);
+      if(t0 > 0 && bars > 0 && e != 4066)
+         break;
+      Sleep(300);
+     }
+   if(bars > 0 && bars < need)
+     {
+      for(int k2 = 0; k2 < 3; k2++)
+        {
+         int before = bars;
+         iTime(sym, tf, need - 1);   // درخواست تاریخچه عمیق‌تر
+         Sleep(400);
+         bars = iBars(sym, tf);
+         if(bars >= need || bars == before)
+            break;
+        }
+     }
+   return(bars);
+  }
+//+------------------------------------------------------------------+
 void CmdRates(string id, string sym, int tfmin, int n)
   {
    if(!SymbolSelect(sym, true))
@@ -310,16 +341,10 @@ void CmdRates(string id, string sym, int tfmin, int n)
       ReplyErr(id, 4106, sym);
       return;
      }
-   int bars = iBars(sym, tfmin);
+   int bars = WaitHistory(sym, tfmin, n);
    if(bars <= 0)
      {
-      iTime(sym, tfmin, 0);
-      Sleep(500);
-      bars = iBars(sym, tfmin);
-     }
-   if(bars <= 0)
-     {
-      ReplyErr(id, 4066, "no history for " + sym);
+      ReplyErr(id, 4066, "history is still downloading for " + sym + " - try again in a few seconds");
       return;
      }
    if(n > bars)
